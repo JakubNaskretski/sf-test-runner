@@ -1,9 +1,9 @@
 {
   "name": "sf-test-runner",
   "displayName": "Salesforce Test Runner",
-  "description": "Run Apex tests, see inline coverage in the gutter, and browse results in a sidebar tree. Piggybacks on your existing sf CLI auth.",
+  "description": "Run Apex tests with inline coverage in the gutter, browse results in a sidebar tree, and see every sf CLI command we execute in a collapsible panel. Reuses your existing sf CLI auth.",
   "version": "0.1.0",
-  "publisher": "skrety",
+  "publisher": "Skrety",
   "license": "MIT",
   "engines": {
     "vscode": "^1.85.0"
@@ -17,19 +17,22 @@
     "apex",
     "test",
     "coverage",
+    "sf",
     "sfdx"
   ],
   "repository": {
     "type": "git",
-    "url": "https://github.com/skrety/sf-test-runner.git"
+    "url": "https://github.com/JakubNaskretski/sf-test-runner.git"
   },
   "bugs": {
-    "url": "https://github.com/skrety/sf-test-runner/issues"
+    "url": "https://github.com/JakubNaskretski/sf-test-runner/issues"
   },
-  "homepage": "https://github.com/skrety/sf-test-runner#readme",
+  "homepage": "https://github.com/JakubNaskretski/sf-test-runner#readme",
   "main": "./dist/extension.js",
   "activationEvents": [
     "onLanguage:apex",
+    "onView:sfTestRunner.results",
+    "onView:sfTestRunner.commands",
     "workspaceContains:**/*.cls"
   ],
   "contributes": {
@@ -40,8 +43,8 @@
         "icon": "$(play)"
       },
       {
-        "command": "sfTestRunner.runAll",
-        "title": "SF Tests: Run All Tests in Last Class",
+        "command": "sfTestRunner.runLast",
+        "title": "SF Tests: Re-run Last Class",
         "icon": "$(run-all)"
       },
       {
@@ -61,14 +64,28 @@
       },
       {
         "command": "sfTestRunner.openTestResult",
-        "title": "SF Tests: Open Test Result",
-        "icon": "$(go-to-file)"
+        "title": "SF Tests: Open Test Result"
+      },
+      {
+        "command": "sfTestRunner.clearCommandHistory",
+        "title": "SF Tests: Clear Command History",
+        "icon": "$(clear-all)"
+      },
+      {
+        "command": "sfTestRunner.copyCommand",
+        "title": "SF Tests: Copy Command",
+        "icon": "$(copy)"
+      },
+      {
+        "command": "sfTestRunner.showOutput",
+        "title": "SF Tests: Show Output Channel",
+        "icon": "$(output)"
       }
     ],
     "menus": {
       "view/title": [
         {
-          "command": "sfTestRunner.runAll",
+          "command": "sfTestRunner.runLast",
           "when": "view == sfTestRunner.results",
           "group": "navigation@1"
         },
@@ -81,6 +98,23 @@
           "command": "sfTestRunner.selectOrg",
           "when": "view == sfTestRunner.results",
           "group": "navigation@3"
+        },
+        {
+          "command": "sfTestRunner.clearCommandHistory",
+          "when": "view == sfTestRunner.commands",
+          "group": "navigation@1"
+        },
+        {
+          "command": "sfTestRunner.showOutput",
+          "when": "view == sfTestRunner.commands",
+          "group": "navigation@2"
+        }
+      ],
+      "view/item/context": [
+        {
+          "command": "sfTestRunner.copyCommand",
+          "when": "view == sfTestRunner.commands && viewItem == sfCommand",
+          "group": "inline"
         }
       ],
       "editor/title": [
@@ -107,31 +141,23 @@
           "name": "Test Results",
           "icon": "$(beaker)",
           "contextualTitle": "Salesforce Test Runner"
+        },
+        {
+          "id": "sfTestRunner.commands",
+          "name": "Recent sf Commands",
+          "icon": "$(terminal)",
+          "contextualTitle": "Salesforce Test Runner"
         }
       ]
     },
     "configuration": {
       "title": "Salesforce Test Runner",
       "properties": {
-        "sfTestRunner.targetOrg": {
-          "type": "string",
-          "default": "",
-          "description": "Default target org alias or username. Leave blank to use the project default-org from sf CLI."
-        },
-        "sfTestRunner.apiVersion": {
-          "type": "string",
-          "default": "60.0",
-          "description": "Salesforce API version used for Tooling API calls."
-        },
-        "sfTestRunner.pollIntervalMs": {
-          "type": "number",
-          "default": 2000,
-          "description": "Polling interval (ms) when waiting for async test runs to complete."
-        },
-        "sfTestRunner.pollTimeoutMs": {
+        "sfTestRunner.testTimeoutMs": {
           "type": "number",
           "default": 600000,
-          "description": "Total timeout (ms) for an async test run."
+          "minimum": 60000,
+          "description": "Hard timeout (ms) for `sf apex run test`. Also drives the --wait minutes flag."
         },
         "sfTestRunner.showCoverageOnOpen": {
           "type": "boolean",
@@ -158,8 +184,5 @@
     "esbuild": "^0.20.0",
     "eslint": "^8.57.0",
     "typescript": "^5.4.0"
-  },
-  "dependencies": {
-    "jsforce": "^3.3.0"
   }
 }
