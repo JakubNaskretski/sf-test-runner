@@ -2,7 +2,7 @@
 
 All notable changes to the "sf-test-runner" extension are documented here.
 
-## [Unreleased]
+## [0.2.0] - 2026-05-21
 
 ### Changed
 - Switched backend from `jsforce` + Tooling API polling to `sf` CLI shell-out (`sf apex run test --code-coverage --result-format json --wait …`). Aligns with the conventions used by the SOQL Editor / Apex Editor sibling plugins.
