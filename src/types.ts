@@ -1,40 +1,50 @@
 export interface OrgInfo {
-  accessToken: string;
-  instanceUrl: string;
+  alias: string;
   username: string;
-  alias?: string;
-  apiVersion: string;
+  instanceUrl: string;
+  isDefault: boolean;
 }
 
 export interface TestMethodResult {
-  id: string;
   className: string;
   methodName: string;
   outcome: 'Pass' | 'Fail' | 'CompileFail' | 'Skip';
   runTime: number;
   message: string | null;
   stackTrace: string | null;
-  apexClassId: string;
 }
 
 export interface TestRunSummary {
-  asyncApexJobId: string;
+  asyncApexJobId: string | null;
   status: string;
-  classesEnqueued: number;
-  methodsEnqueued: number;
-  methodsCompleted: number;
-  methodsFailed: number;
-  testTime: number;
-  startTime: string;
-  endTime: string | null;
+  testsRan: number;
+  passing: number;
+  failing: number;
+  skipped: number;
+  testTotalTime: number;
   results: TestMethodResult[];
 }
 
 export interface CoverageInfo {
-  apexClassId: string;
   className: string;
   numLinesCovered: number;
   numLinesUncovered: number;
   coveredLines: number[];
   uncoveredLines: number[];
+}
+
+export type CommandStatus = 'running' | 'success' | 'error';
+
+export interface CommandLogEntry {
+  id: number;
+  startedAt: number;
+  durationMs: number | null;
+  command: string;
+  args: string[];
+  status: CommandStatus;
+  exitCode: number | null;
+  stdoutBytes: number;
+  stderrBytes: number;
+  stderrSnippet: string | null;
+  errorMessage: string | null;
 }
