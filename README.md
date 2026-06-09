@@ -53,4 +53,4 @@ Because we never embed your access token directly, your `sf` CLI auth is the sin
 
 ## License
 
-[MIT](./LICENSE)
+MIT — see the bundled LICENSE file.

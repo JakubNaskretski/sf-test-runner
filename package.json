@@ -20,14 +20,6 @@
     "sf",
     "sfdx"
   ],
-  "repository": {
-    "type": "git",
-    "url": "https://github.com/JakubNaskretski/sf-test-runner.git"
-  },
-  "bugs": {
-    "url": "https://github.com/JakubNaskretski/sf-test-runner/issues"
-  },
-  "homepage": "https://github.com/JakubNaskretski/sf-test-runner#readme",
   "main": "./dist/extension.js",
   "activationEvents": [
     "onLanguage:apex",
@@ -171,8 +163,8 @@
     "vscode:prepublish": "npm run build",
     "build": "node esbuild.js",
     "watch": "node esbuild.js --watch",
-    "package": "npx -y @vscode/vsce@latest package --no-dependencies",
-    "publish": "npx -y @vscode/vsce@latest publish --no-dependencies",
+    "package": "npx -y @vscode/vsce@latest package --no-dependencies --allow-missing-repository",
+    "publish": "npx -y @vscode/vsce@latest publish --no-dependencies --allow-missing-repository",
     "lint": "eslint src --ext .ts",
     "typecheck": "tsc --noEmit"
   },
