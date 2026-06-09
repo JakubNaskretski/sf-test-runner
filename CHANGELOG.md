@@ -2,6 +2,11 @@
 
 All notable changes to the "sf-test-runner" extension are documented here.
 
+## [0.2.1] - 2026-06-09
+
+### Changed
+- Internal packaging and tooling cleanup. No functional changes.
+
 ## [0.2.0] - 2026-05-21
 
 ### Changed

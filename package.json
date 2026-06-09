@@ -2,7 +2,7 @@
   "name": "sf-test-runner",
   "displayName": "Salesforce Test Runner",
   "description": "Run Apex tests with inline coverage in the gutter, browse results in a sidebar tree, and see every sf CLI command we execute in a collapsible panel. Reuses your existing sf CLI auth.",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "publisher": "Skrety",
   "license": "MIT",
   "engines": {
