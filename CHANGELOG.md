@@ -2,6 +2,11 @@
 
 All notable changes to the "sf-test-runner" extension are documented here.
 
+## [0.2.2] - 2026-06-19
+
+### Added
+- Branded extension icon — shown on the Marketplace listing and on the activity-bar.
+
 ## [0.2.1] - 2026-06-09
 
 ### Changed
