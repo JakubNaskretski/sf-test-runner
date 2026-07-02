@@ -41,6 +41,15 @@
         "icon": "$(run-all)"
       },
       {
+        "command": "sfTestRunner.runTestMethod",
+        "title": "SF Tests: Run Test Method"
+      },
+      {
+        "command": "sfTestRunner.rerunFailed",
+        "title": "SF Tests: Re-run Failed Tests",
+        "icon": "$(debug-rerun)"
+      },
+      {
         "command": "sfTestRunner.refreshCoverage",
         "title": "SF Tests: Refresh Coverage from Org",
         "icon": "$(refresh)"
@@ -76,6 +85,20 @@
       }
     ],
     "menus": {
+      "commandPalette": [
+        {
+          "command": "sfTestRunner.runTestMethod",
+          "when": "false"
+        },
+        {
+          "command": "sfTestRunner.openTestResult",
+          "when": "false"
+        },
+        {
+          "command": "sfTestRunner.copyCommand",
+          "when": "false"
+        }
+      ],
       "view/title": [
         {
           "command": "sfTestRunner.runLast",
@@ -83,14 +106,19 @@
           "group": "navigation@1"
         },
         {
-          "command": "sfTestRunner.refreshCoverage",
+          "command": "sfTestRunner.rerunFailed",
           "when": "view == sfTestRunner.results",
           "group": "navigation@2"
         },
         {
-          "command": "sfTestRunner.selectOrg",
+          "command": "sfTestRunner.refreshCoverage",
           "when": "view == sfTestRunner.results",
           "group": "navigation@3"
+        },
+        {
+          "command": "sfTestRunner.selectOrg",
+          "when": "view == sfTestRunner.results",
+          "group": "navigation@4"
         },
         {
           "command": "sfTestRunner.clearCommandHistory",
@@ -167,7 +195,9 @@
     "package": "npx -y @vscode/vsce@latest package --no-dependencies --allow-missing-repository",
     "publish": "npx -y @vscode/vsce@latest publish --no-dependencies --allow-missing-repository",
     "lint": "eslint src --ext .ts",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "pretest": "tsc -p ./tsconfig.test.json",
+    "test": "node --test \"out-test/**/*.test.js\""
   },
   "devDependencies": {
     "@types/node": "^20.11.0",

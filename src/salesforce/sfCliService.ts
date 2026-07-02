@@ -1,22 +1,49 @@
 import * as vscode from 'vscode';
-import { execFile } from 'child_process';
+import {
+  SfCliService as KitSfCliService,
+  SfCliCancelledError,
+  SfCliError,
+} from '../kit/sfCli';
 import { CommandLogEntry, CoverageInfo, OrgInfo, TestMethodResult, TestRunSummary } from '../types';
+import { mapRunCoverage } from './coverageMapping';
 
 interface RunOptions {
   timeoutMs?: number;
   cancellation?: vscode.CancellationToken;
 }
 
+/** A completed test run plus the per-class coverage the `--code-coverage` flag
+ *  returned inline. The coverage map is keyed by lowercased class name and
+ *  covers every class the run exercised (the classes UNDER TEST, not the test
+ *  classes) — so callers no longer need a follow-up ApexCodeCoverageAggregate
+ *  query to decorate them. */
+export interface TestRunResult {
+  summary: TestRunSummary;
+  coverage: Map<string, CoverageInfo>;
+}
+
+export { SfCliError, SfCliCancelledError };
+
 /**
- * Wraps the Salesforce CLI (`sf`) so test execution, coverage queries, and
- * org listing all flow through one logged surface.
+ * Wraps the Salesforce CLI (`sf`) so test execution, coverage queries, and org
+ * listing all flow through one logged surface.
+ *
+ * The spawn/JSON/cancel core now comes from the shared kit (`src/kit/sfCli.ts`,
+ * vendored from sf-kit): it fixes the family-wide bugs this plugin's old
+ * `execFile('sf', …)` had — Windows `sf.cmd`/`sf.ps1` shim resolution (Node
+ * cannot spawn the shim directly, and the failure used to be misreported as "sf
+ * not found"), the partial-JSON-on-timeout guard (a killed run no longer feeds
+ * truncated stdout to `JSON.parse`, which surfaced a raw "Unexpected end of JSON
+ * input"), a real "timed out after Nms" message, and SIGTERM→SIGKILL escalation.
+ *
+ * The org is passed EXPLICITLY into every call rather than read from mutable
+ * instance state, so a run started against org A always finishes (coverage
+ * queries included) against org A even if the user switches orgs mid-run.
  */
 export class SfCliService {
   private currentOrg: OrgInfo | undefined;
   private nextCommandId = 1;
-
-  private readonly logEmitter = new vscode.EventEmitter<{ level: string; message: string }>();
-  readonly onLog = this.logEmitter.event;
+  private readonly kit = new KitSfCliService();
 
   private readonly commandEmitter = new vscode.EventEmitter<CommandLogEntry>();
   readonly onCommand = this.commandEmitter.event;
@@ -27,84 +54,111 @@ export class SfCliService {
     return this.currentOrg;
   }
 
-  setCurrentOrg(org: OrgInfo): void {
+  setCurrentOrg(org: OrgInfo | undefined): void {
     this.currentOrg = org;
   }
 
   async listOrgs(): Promise<OrgInfo[]> {
-    const stdout = await this.runCli(['org', 'list', '--json']);
-    const parsed = JSON.parse(stdout);
-    const raw = [
-      ...(parsed.result?.nonScratchOrgs || []),
-      ...(parsed.result?.scratchOrgs || []),
-      ...(parsed.result?.sandboxes || []),
-      ...(parsed.result?.other || []),
-    ];
-    return raw.map((o: any) => ({
+    const kitOrgs = await this.logged(['org', 'list', '--skip-connection-status', '--json'], {}, () =>
+      this.kit.listOrgs(),
+    );
+    return kitOrgs.map((o) => ({
       alias: o.alias || o.username,
       username: o.username,
       instanceUrl: o.instanceUrl || '',
-      isDefault:
-        o.isDefaultUsername || o.defaultMarker === '(U)' || o.defaultMarker === '(U)' || false,
+      isDefault: o.isDefaultUsername || false,
     }));
   }
 
+  /**
+   * Run Apex tests for a class against `orgUsername` and return the summary plus
+   * the inline per-class coverage from `--code-coverage`. Passing the org
+   * explicitly (rather than reading `this.currentOrg`) is what keeps a run
+   * anchored to the org it started on.
+   */
   async runApexTests(
     className: string,
+    orgUsername: string,
     options: RunOptions = {},
-  ): Promise<TestRunSummary> {
+  ): Promise<TestRunResult> {
+    return this.runTests(['--class-names', className], orgUsername, options);
+  }
+
+  /** Run one or more specific test methods (`Class.method`) against `orgUsername`. */
+  async runApexTestMethods(
+    tests: string[],
+    orgUsername: string,
+    options: RunOptions = {},
+  ): Promise<TestRunResult> {
+    const testArgs: string[] = [];
+    for (const t of tests) {
+      testArgs.push('--tests', t);
+    }
+    return this.runTests(testArgs, orgUsername, options);
+  }
+
+  private async runTests(
+    selectorArgs: string[],
+    orgUsername: string,
+    options: RunOptions,
+  ): Promise<TestRunResult> {
     const args = [
       'apex',
       'run',
       'test',
-      '--class-names',
-      className,
+      ...selectorArgs,
       '--code-coverage',
       '--result-format',
       'json',
       '--wait',
       this.waitMinutes().toString(),
-      ...this.targetOrgArgs(),
+      '--target-org',
+      orgUsername,
     ];
 
-    let stdout: string;
-    try {
-      stdout = await this.runCli(args, {
+    // `sf apex run test` exits non-zero when tests fail, but the kit still
+    // resolves a normal (non-zero) exit and parses the JSON envelope on stdout —
+    // so failing tests come back as a parsed result here, not an exception. A
+    // genuine throw (bad project, expired auth, timeout, killed run) is a real
+    // error and propagates; the kit already refuses to parse partial output from
+    // a killed run, so there's no partial-JSON coercion to do.
+    const parsed = await this.logged(args, options, () =>
+      this.kit.runJson<any>(args, {
         timeoutMs: options.timeoutMs ?? this.testTimeoutMs(),
-        cancellation: options.cancellation,
-      });
-    } catch (err: any) {
-      // `sf apex run test` exits non-zero when tests fail. The JSON body is still on stdout.
-      if (typeof err?.stdout === 'string' && err.stdout.trim().startsWith('{')) {
-        stdout = err.stdout;
-      } else {
-        throw err;
-      }
-    }
+        signal: toSignal(options.cancellation),
+      }),
+    );
 
-    const parsed = JSON.parse(stdout);
-    return mapTestResult(parsed.result ?? parsed, className);
+    const result = parsed?.result ?? parsed;
+    const summary = mapTestResult(result);
+    const coverage = mapRunCoverage(result?.coverage);
+    return { summary, coverage };
   }
 
-  async getCoverageForClass(className: string): Promise<CoverageInfo | null> {
+  /**
+   * Query the org's stored aggregate coverage for a class. Used for the
+   * open-file auto-load and the explicit "Refresh Coverage" command — NOT after
+   * a test run (the run returns coverage inline now).
+   */
+  async getCoverageForClass(className: string, orgUsername: string): Promise<CoverageInfo | null> {
     const escaped = className.replace(/'/g, "\\'");
     const soql =
-      "SELECT ApexClassOrTrigger.Name, NumLinesCovered, NumLinesUncovered, Coverage " +
+      'SELECT ApexClassOrTrigger.Name, NumLinesCovered, NumLinesUncovered, Coverage ' +
       "FROM ApexCodeCoverageAggregate WHERE ApexClassOrTrigger.Name = '" +
       escaped +
       "' LIMIT 1";
 
-    const stdout = await this.runCli([
+    const args = [
       'data',
       'query',
       '--query',
       soql,
       '--use-tooling-api',
       '--json',
-      ...this.targetOrgArgs(),
-    ]);
-
-    const parsed = JSON.parse(stdout);
+      '--target-org',
+      orgUsername,
+    ];
+    const parsed = await this.logged(args, {}, () => this.kit.runJson<any>(args));
     const row = parsed.result?.records?.[0];
     if (!row) return null;
 
@@ -118,10 +172,6 @@ export class SfCliService {
     };
   }
 
-  private targetOrgArgs(): string[] {
-    return this.currentOrg ? ['--target-org', this.currentOrg.username] : [];
-  }
-
   private waitMinutes(): number {
     const totalMs = this.testTimeoutMs();
     return Math.max(1, Math.ceil(totalMs / 60000));
@@ -133,11 +183,20 @@ export class SfCliService {
       .get<number>('testTimeoutMs', 600000);
   }
 
-  private runCli(args: string[], options: RunOptions = {}): Promise<string> {
+  /**
+   * Emit a running/finished CommandLogEntry around a kit call so the "Recent sf
+   * Commands" panel still records every invocation, while the actual spawn/parse
+   * runs through the kit. `run` returns the already-parsed value.
+   */
+  private async logged<T>(
+    args: string[],
+    _options: RunOptions,
+    run: () => Promise<T>,
+  ): Promise<T> {
     const id = this.nextCommandId++;
     const startedAt = Date.now();
     const display = `sf ${args.join(' ')}`;
-    this.log('cmd', display);
+    this.output.appendLine(`[cmd] ${display}`);
 
     const inflight: CommandLogEntry = {
       id,
@@ -154,77 +213,54 @@ export class SfCliService {
     };
     this.commandEmitter.fire(inflight);
 
-    return new Promise<string>((resolve, reject) => {
-      const child = execFile(
-        'sf',
-        args,
-        { timeout: options.timeoutMs ?? 60000, maxBuffer: 50 * 1024 * 1024 },
-        (error, stdout, stderr) => {
-          const durationMs = Date.now() - startedAt;
-          const stdoutBytes = Buffer.byteLength(stdout || '', 'utf8');
-          const stderrBytes = Buffer.byteLength(stderr || '', 'utf8');
-          const stderrSnippet = stderr ? truncate(stderr.trim(), 400) : null;
-
-          if (error) {
-            const code = (error as NodeJS.ErrnoException).code ?? null;
-            const finished: CommandLogEntry = {
-              ...inflight,
-              durationMs,
-              status: 'error',
-              exitCode: typeof (error as any).code === 'number' ? (error as any).code : null,
-              stdoutBytes,
-              stderrBytes,
-              stderrSnippet,
-              errorMessage: error.message,
-            };
-            this.commandEmitter.fire(finished);
-            this.log('error', `${display} → ${error.message}`);
-            const wrapped: any = new Error(error.message);
-            wrapped.stdout = stdout;
-            wrapped.stderr = stderr;
-            wrapped.code = code;
-            reject(wrapped);
-            return;
-          }
-
-          this.commandEmitter.fire({
-            ...inflight,
-            durationMs,
-            status: 'success',
-            exitCode: 0,
-            stdoutBytes,
-            stderrBytes,
-            stderrSnippet,
-            errorMessage: null,
-          });
-          this.log('ok', `${display} → ${durationMs}ms, ${stdoutBytes}B stdout`);
-          resolve(stdout);
-        },
-      );
-
-      options.cancellation?.onCancellationRequested(() => {
-        child.kill();
+    try {
+      const value = await run();
+      const durationMs = Date.now() - startedAt;
+      this.commandEmitter.fire({
+        ...inflight,
+        durationMs,
+        status: 'success',
+        exitCode: 0,
       });
-    });
-  }
-
-  private log(level: string, message: string): void {
-    this.output.appendLine(`[${level}] ${message}`);
-    this.logEmitter.fire({ level, message });
+      this.output.appendLine(`[ok] ${display} → ${durationMs}ms`);
+      return value;
+    } catch (err: any) {
+      const durationMs = Date.now() - startedAt;
+      const message = err instanceof Error ? err.message : String(err);
+      const stderr = typeof err?.stderr === 'string' ? err.stderr : null;
+      this.commandEmitter.fire({
+        ...inflight,
+        durationMs,
+        status: 'error',
+        exitCode: null,
+        stderrSnippet: stderr ? truncate(stderr.trim(), 400) : null,
+        errorMessage: message,
+      });
+      this.output.appendLine(`[error] ${display} → ${message}`);
+      throw err;
+    }
   }
 
   dispose(): void {
-    this.logEmitter.dispose();
     this.commandEmitter.dispose();
   }
 }
 
-function mapTestResult(result: any, fallbackClassName: string): TestRunSummary {
+/** Adapt a VS Code CancellationToken to an AbortSignal for the kit's run API. */
+function toSignal(token: vscode.CancellationToken | undefined): AbortSignal | undefined {
+  if (!token) return undefined;
+  const controller = new AbortController();
+  if (token.isCancellationRequested) controller.abort();
+  else token.onCancellationRequested(() => controller.abort());
+  return controller.signal;
+}
+
+export function mapTestResult(result: any): TestRunSummary {
   const summary = result?.summary ?? {};
   const tests = Array.isArray(result?.tests) ? result.tests : [];
 
   const results: TestMethodResult[] = tests.map((t: any) => ({
-    className: t.ApexClass?.Name ?? t.apexClass?.name ?? fallbackClassName,
+    className: t.ApexClass?.Name ?? t.apexClass?.name ?? 'unknown',
     methodName: t.MethodName ?? t.methodName ?? 'unknown',
     outcome: (t.Outcome ?? t.outcome ?? 'Skip') as TestMethodResult['outcome'],
     runTime: t.RunTime ?? t.runTime ?? 0,
@@ -236,9 +272,18 @@ function mapTestResult(result: any, fallbackClassName: string): TestRunSummary {
     asyncApexJobId: summary.testRunId ?? summary.TestRunId ?? null,
     status: summary.outcome ?? summary.Outcome ?? 'Unknown',
     testsRan: Number(summary.testsRan ?? summary.TestsRan ?? results.length),
-    passing: Number(summary.passing ?? summary.Passing ?? results.filter((r) => r.outcome === 'Pass').length),
-    failing: Number(summary.failing ?? summary.Failing ?? results.filter((r) => r.outcome !== 'Pass').length),
-    skipped: Number(summary.skipped ?? summary.Skipped ?? 0),
+    passing: Number(
+      summary.passing ?? summary.Passing ?? results.filter((r) => r.outcome === 'Pass').length,
+    ),
+    failing: Number(
+      summary.failing ??
+        summary.Failing ??
+        // Skip is not a failure — count only genuine failures in the fallback.
+        results.filter((r) => r.outcome === 'Fail' || r.outcome === 'CompileFail').length,
+    ),
+    skipped: Number(
+      summary.skipped ?? summary.Skipped ?? results.filter((r) => r.outcome === 'Skip').length,
+    ),
     testTotalTime: Number(summary.testTotalTime ?? summary.TestTotalTime ?? 0),
     results,
   };

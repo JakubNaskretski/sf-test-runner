@@ -39,6 +39,13 @@ export class TestTreeProvider implements vscode.TreeDataProvider<Node> {
     this.emitter.fire(undefined);
   }
 
+  /** Clear all results (used on org switch so stale results don't linger). */
+  reset(): void {
+    this.summary = null;
+    this.running = false;
+    this.emitter.fire(undefined);
+  }
+
   getTreeItem(node: Node): vscode.TreeItem {
     if (node.kind === 'empty') {
       const item = new vscode.TreeItem(node.message);
@@ -47,7 +54,10 @@ export class TestTreeProvider implements vscode.TreeDataProvider<Node> {
     }
 
     if (node.kind === 'class') {
-      const failed = node.methods.filter((m) => m.outcome !== 'Pass').length;
+      // Skip is not a failure — count only genuine failures for the class badge.
+      const failed = node.methods.filter(
+        (m) => m.outcome === 'Fail' || m.outcome === 'CompileFail',
+      ).length;
       const item = new vscode.TreeItem(
         `${node.className} (${node.methods.length - failed}/${node.methods.length})`,
         vscode.TreeItemCollapsibleState.Expanded,
