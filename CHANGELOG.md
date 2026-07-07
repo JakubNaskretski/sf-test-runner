@@ -2,6 +2,25 @@
 
 All notable changes to the "sf-test-runner" extension are documented here.
 
+## [0.3.0] - 2026-07-07
+
+### Added
+- Run a single test method from its codelens.
+- **Re-run Failed Tests** — re-run only the failures of the last run.
+- Click a failed result to jump to the failing line; failures also land in the Problems panel.
+- Status-bar org badge (`PROD`/`SBX`/`SCR`) with a warning tint on production.
+- Org selection is shared with the other Skrety Salesforce extensions.
+
+### Fixed
+- Test durations no longer show as `NaNms` (the CLI reports times as strings like `81 ms`).
+- `@IsTest(SeeAllData=…)` no longer produces a phantom "Run Test Method | IsTest" codelens, and inline annotations keep the real method name.
+- Opening a class with no stored coverage no longer re-queries the org on every tab switch.
+- Coverage decorations now come straight from each run's own `--code-coverage` output — no follow-up org query needed.
+- Cancelling a run shows a notice instead of an error (an already-queued org job may still finish).
+- Long runs are no longer hard-killed at exactly the `--wait` ceiling.
+- Windows: the `sf.cmd` launcher now starts on current VS Code builds (Node 20+ refuses `.cmd` spawns; the shim is bypassed safely), and hung CLI processes are force-killed reliably after a timeout.
+- The command panel no longer shows fabricated exit codes or byte counts.
+
 ## [0.2.2] - 2026-06-19
 
 ### Added
