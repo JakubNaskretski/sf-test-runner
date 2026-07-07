@@ -5,6 +5,7 @@ import {
   setSharedOrg,
   onSharedOrgChange,
   migrateToSharedOrg,
+  orgBadge,
 } from '../kit/orgs';
 import { OrgInfo } from '../types';
 
@@ -166,9 +167,21 @@ export class OrgPicker implements vscode.Disposable {
       });
   }
 
+  /** Family convention: over-warn — a PROD (or unresolvable) org gets the warn
+   *  tint so the target is unmistakable before a run. */
   private refreshLabel(): void {
     const org = this.sfCli.getCurrentOrg();
-    this.statusBar.text = org ? `$(beaker) SF: ${org.alias}` : '$(beaker) SF: (no org)';
+    if (!org) {
+      this.statusBar.text = '$(beaker) SF: (no org)';
+      this.statusBar.backgroundColor = undefined;
+      return;
+    }
+    const badge = orgBadge(org);
+    this.statusBar.text = `$(beaker) SF: ${org.alias} [${badge}]`;
+    this.statusBar.backgroundColor =
+      badge === 'PROD'
+        ? new vscode.ThemeColor('statusBarItem.warningBackground')
+        : undefined;
   }
 
   dispose(): void {

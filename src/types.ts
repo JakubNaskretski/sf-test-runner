@@ -3,6 +3,9 @@ export interface OrgInfo {
   username: string;
   instanceUrl: string;
   isDefault: boolean;
+  /** From `sf org list` buckets — drive the status-bar PROD/SBX/SCR badge. */
+  isSandbox?: boolean;
+  isScratch?: boolean;
 }
 
 export interface TestMethodResult {
@@ -42,9 +45,9 @@ export interface CommandLogEntry {
   command: string;
   args: string[];
   status: CommandStatus;
+  /** Real exit code when known; null otherwise (the kit hides it behind parsed
+   *  results, and inventing 0 for a run that exited 100 was worse than none). */
   exitCode: number | null;
-  stdoutBytes: number;
-  stderrBytes: number;
   stderrSnippet: string | null;
   errorMessage: string | null;
 }

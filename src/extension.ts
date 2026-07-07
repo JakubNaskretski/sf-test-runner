@@ -1,5 +1,5 @@
 import * as vscode from 'vscode';
-import { SfCliService, TestRunResult } from './salesforce/sfCliService';
+import { SfCliCancelledError, SfCliService, TestRunResult } from './salesforce/sfCliService';
 import { OrgPicker } from './ui/orgPicker';
 import { ApexTestCodeLensProvider } from './ui/codeLens';
 import { CoverageDecorator, classNameFromUri } from './ui/coverageDecorator';
@@ -22,6 +22,10 @@ let runGuard: RunGuard;
 let lastClassRun: string | null = null;
 /** The most recent run's summary, for "re-run failed only". */
 let lastSummary: TestRunSummary | null = null;
+/** Classes known to have no stored coverage, plus in-flight lookups — without
+ *  this, every tab focus of an uncovered class spawns another `sf data query`. */
+const coverageKnownAbsent = new Set<string>();
+const coverageLoading = new Set<string>();
 
 export function activate(context: vscode.ExtensionContext): void {
   output = vscode.window.createOutputChannel('SF Tests');
@@ -63,6 +67,7 @@ export function activate(context: vscode.ExtensionContext): void {
       diagnostics.clear();
       lastSummary = null;
       lastClassRun = null;
+      coverageKnownAbsent.clear();
       coverage.applyTo(vscode.window.activeTextEditor);
     }),
   );
@@ -232,7 +237,7 @@ async function runTests(
         results.setSummary(summary);
         lastSummary = summary;
         logSummary(summary);
-        publishDiagnostics(summary);
+        await publishDiagnostics(summary);
 
         if (summary.failing > 0) {
           void vscode.window.showWarningMessage(
@@ -250,12 +255,19 @@ async function runTests(
         for (const [, info] of runCoverage) {
           coverage.setCoverage(info.className, info);
         }
+        // The run wrote fresh coverage org-side — previous "absent" answers are stale.
+        coverageKnownAbsent.clear();
         coverage.applyTo(vscode.window.activeTextEditor);
       },
     );
   } catch (err) {
     results.setRunning(false);
-    handleError(err);
+    if (err instanceof SfCliCancelledError) {
+      output.appendLine('✕ Run cancelled. An already-queued test job may still finish in the org.');
+      void vscode.window.showInformationMessage(`SF Tests: run cancelled (${label}).`);
+    } else {
+      handleError(err);
+    }
   } finally {
     runGuard.release();
   }
@@ -280,11 +292,13 @@ async function refreshCoverage(uri?: vscode.Uri, explicitName?: string): Promise
       try {
         const cov = await sfCli.getCoverageForClass(className, org.username);
         if (!cov) {
+          coverageKnownAbsent.add(className.toLowerCase());
           void vscode.window.showInformationMessage(
             `No coverage stored in org for ${className}. Run tests to generate it.`,
           );
           return;
         }
+        coverageKnownAbsent.delete(className.toLowerCase());
         coverage.setCoverage(className, cov);
         coverage.applyTo(vscode.window.activeTextEditor);
         const total = cov.numLinesCovered + cov.numLinesUncovered;
@@ -312,14 +326,21 @@ async function maybeAutoLoadCoverage(editor: vscode.TextEditor | undefined): Pro
     coverage.applyTo(editor);
     return;
   }
+  const key = className.toLowerCase();
+  if (coverageKnownAbsent.has(key) || coverageLoading.has(key)) return;
+  coverageLoading.add(key);
   try {
     const cov = await sfCli.getCoverageForClass(className, org.username);
     if (cov) {
       coverage.setCoverage(className, cov);
       coverage.applyTo(editor);
+    } else {
+      coverageKnownAbsent.add(key);
     }
   } catch {
     // best-effort
+  } finally {
+    coverageLoading.delete(key);
   }
 }
 
@@ -365,9 +386,10 @@ async function jumpToFailure(r: TestMethodResult): Promise<void> {
 
 /**
  * Publish a Problems diagnostic per failing test at its stack line, so failures
- * are navigable from the Problems panel. Rebuilt each run.
+ * are navigable from the Problems panel. Rebuilt each run; awaited by the run
+ * pipeline so a following run's clear() can't interleave with a late publish.
  */
-function publishDiagnostics(summary: TestRunSummary): void {
+async function publishDiagnostics(summary: TestRunSummary): Promise<void> {
   diagnostics.clear();
   const byUri = new Map<string, vscode.Diagnostic[]>();
   const pending: Promise<void>[] = [];
@@ -396,11 +418,10 @@ function publishDiagnostics(summary: TestRunSummary): void {
     );
   }
 
-  void Promise.all(pending).then(() => {
-    for (const [key, diags] of byUri) {
-      diagnostics.set(vscode.Uri.parse(key), diags);
-    }
-  });
+  await Promise.all(pending);
+  for (const [key, diags] of byUri) {
+    diagnostics.set(vscode.Uri.parse(key), diags);
+  }
 }
 
 /** Resolve an Apex class/trigger name to its source file in the workspace. */

@@ -60,6 +60,26 @@ test('findTestMethods handles legacy testMethod keyword', () => {
   assert.deepEqual(methods.map((m) => m.methodName), ['legacyOne']);
 });
 
+test('a parenthesized @IsTest(SeeAllData=…) line is not a method named "IsTest"', () => {
+  const src = `@IsTest
+private class ProbeTest {
+    @IsTest(SeeAllData=false)
+    static void testFail() {
+        System.assert(false);
+    }
+}`;
+  const methods = findTestMethods(src.split('\n'), 'ProbeTest');
+  assert.deepEqual(methods.map((m) => m.methodName), ['testFail']);
+});
+
+test('inline parenthesized annotation still yields the real method name', () => {
+  const src = `public class C {
+    @isTest(SeeAllData=true) static void seesAllData() {}
+}`;
+  const methods = findTestMethods(src.split('\n'), 'C');
+  assert.deepEqual(methods.map((m) => m.methodName), ['seesAllData']);
+});
+
 test('findTestMethods does not treat the class declaration as a method', () => {
   const methods = findTestMethods(CLASS.split('\n'), 'MyTestClass');
   assert.ok(!methods.some((m) => m.methodName === 'MyTestClass'));

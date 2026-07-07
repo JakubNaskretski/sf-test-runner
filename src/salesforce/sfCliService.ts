@@ -4,8 +4,9 @@ import {
   SfCliCancelledError,
   SfCliError,
 } from '../kit/sfCli';
-import { CommandLogEntry, CoverageInfo, OrgInfo, TestMethodResult, TestRunSummary } from '../types';
+import { CommandLogEntry, CoverageInfo, OrgInfo, TestRunSummary } from '../types';
 import { mapRunCoverage } from './coverageMapping';
+import { mapTestResult } from './resultMapping';
 
 interface RunOptions {
   timeoutMs?: number;
@@ -67,6 +68,8 @@ export class SfCliService {
       username: o.username,
       instanceUrl: o.instanceUrl || '',
       isDefault: o.isDefaultUsername || false,
+      isSandbox: o.isSandbox,
+      isScratch: o.isScratch,
     }));
   }
 
@@ -102,6 +105,7 @@ export class SfCliService {
     orgUsername: string,
     options: RunOptions,
   ): Promise<TestRunResult> {
+    const waitMinutes = this.waitMinutes();
     const args = [
       'apex',
       'run',
@@ -111,7 +115,7 @@ export class SfCliService {
       '--result-format',
       'json',
       '--wait',
-      this.waitMinutes().toString(),
+      waitMinutes.toString(),
       '--target-org',
       orgUsername,
     ];
@@ -122,9 +126,12 @@ export class SfCliService {
     // genuine throw (bad project, expired auth, timeout, killed run) is a real
     // error and propagates; the kit already refuses to parse partial output from
     // a killed run, so there's no partial-JSON coercion to do.
+    // Give the local process a minute beyond the CLI's own server-side --wait,
+    // so the CLI's graceful "run still in progress" envelope wins over a hard
+    // kill when a run brushes the ceiling.
     const parsed = await this.logged(args, options, () =>
       this.kit.runJson<any>(args, {
-        timeoutMs: options.timeoutMs ?? this.testTimeoutMs(),
+        timeoutMs: options.timeoutMs ?? waitMinutes * 60_000 + 60_000,
         signal: toSignal(options.cancellation),
       }),
     );
@@ -206,8 +213,6 @@ export class SfCliService {
       args,
       status: 'running',
       exitCode: null,
-      stdoutBytes: 0,
-      stderrBytes: 0,
       stderrSnippet: null,
       errorMessage: null,
     };
@@ -216,11 +221,12 @@ export class SfCliService {
     try {
       const value = await run();
       const durationMs = Date.now() - startedAt;
+      // exitCode stays null: the kit parses the envelope regardless of exit
+      // status (failing tests exit 100), so a fabricated 0 here would lie.
       this.commandEmitter.fire({
         ...inflight,
         durationMs,
         status: 'success',
-        exitCode: 0,
       });
       this.output.appendLine(`[ok] ${display} → ${durationMs}ms`);
       return value;
@@ -253,40 +259,6 @@ function toSignal(token: vscode.CancellationToken | undefined): AbortSignal | un
   if (token.isCancellationRequested) controller.abort();
   else token.onCancellationRequested(() => controller.abort());
   return controller.signal;
-}
-
-export function mapTestResult(result: any): TestRunSummary {
-  const summary = result?.summary ?? {};
-  const tests = Array.isArray(result?.tests) ? result.tests : [];
-
-  const results: TestMethodResult[] = tests.map((t: any) => ({
-    className: t.ApexClass?.Name ?? t.apexClass?.name ?? 'unknown',
-    methodName: t.MethodName ?? t.methodName ?? 'unknown',
-    outcome: (t.Outcome ?? t.outcome ?? 'Skip') as TestMethodResult['outcome'],
-    runTime: t.RunTime ?? t.runTime ?? 0,
-    message: t.Message ?? t.message ?? null,
-    stackTrace: t.StackTrace ?? t.stackTrace ?? null,
-  }));
-
-  return {
-    asyncApexJobId: summary.testRunId ?? summary.TestRunId ?? null,
-    status: summary.outcome ?? summary.Outcome ?? 'Unknown',
-    testsRan: Number(summary.testsRan ?? summary.TestsRan ?? results.length),
-    passing: Number(
-      summary.passing ?? summary.Passing ?? results.filter((r) => r.outcome === 'Pass').length,
-    ),
-    failing: Number(
-      summary.failing ??
-        summary.Failing ??
-        // Skip is not a failure — count only genuine failures in the fallback.
-        results.filter((r) => r.outcome === 'Fail' || r.outcome === 'CompileFail').length,
-    ),
-    skipped: Number(
-      summary.skipped ?? summary.Skipped ?? results.filter((r) => r.outcome === 'Skip').length,
-    ),
-    testTotalTime: Number(summary.testTotalTime ?? summary.TestTotalTime ?? 0),
-    results,
-  };
 }
 
 function truncate(s: string, max: number): string {

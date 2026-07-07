@@ -98,10 +98,6 @@ function detailsFor(e: CommandLogEntry): DetailNode[] {
   if (e.exitCode !== null) {
     details.push(new DetailNode('Exit code', String(e.exitCode), 'symbol-number'));
   }
-  details.push(
-    new DetailNode('Stdout bytes', String(e.stdoutBytes), 'output'),
-    new DetailNode('Stderr bytes', String(e.stderrBytes), 'output'),
-  );
   if (e.stderrSnippet) {
     details.push(new DetailNode('stderr', e.stderrSnippet, 'warning'));
   }

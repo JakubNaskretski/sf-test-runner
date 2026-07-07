@@ -32,6 +32,11 @@ const METHOD_SIG_RE =
 // `testMethod` keyword form (legacy) marks a test method without an annotation.
 const TEST_METHOD_KEYWORD_RE = /\btestMethod\b/i;
 
+// One or more annotations at the start of a line, with optional `(args)` —
+// stripped before signature matching so `@IsTest(SeeAllData=true)` can't be
+// mistaken for a method named "IsTest" (its paren list matches METHOD_SIG_RE).
+const LEADING_ANNOTATIONS_RE = /^\s*(?:@\s*\w+\s*(?:\([^)]*\))?\s*)+/;
+
 /**
  * Whether a source file contains any Apex tests (class-level or method-level
  * `@IsTest`, or the legacy `testMethod` keyword). Cheap gate before scanning.
@@ -74,7 +79,7 @@ export function findTestMethods(lines: string[], className?: string): TestMethod
 
     if (!annotatedInline && !annotatedAbove && !testMethodKeyword) continue;
 
-    const sig = line.match(METHOD_SIG_RE);
+    const sig = line.replace(LEADING_ANNOTATIONS_RE, '').match(METHOD_SIG_RE);
     if (!sig) continue;
     const name = sig[1];
     // Ignore control-flow keywords, the constructor (name === className), and
