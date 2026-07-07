@@ -2,6 +2,11 @@
 
 All notable changes to the "sf-test-runner" extension are documented here.
 
+## [0.4.0] - 2026-07-07
+
+### Added
+- **Load Recent Test Runs** — pick any recent async run from the org (started from a terminal, CI, or a run lost to a window reload) and load its results and coverage exactly like a live run.
+
 ## [0.3.0] - 2026-07-07
 
 ### Added
