@@ -6,6 +6,7 @@ Run Apex tests with inline coverage in the gutter, browse results in a sidebar t
 
 - **Run tests for the current class** via codelens above the class declaration, the editor title bar play button, or `SF Tests: Run Tests in Current Class` in the command palette.
 - **Run a single test method** via the codelens on each `@IsTest` method, and **re-run only the failures** of the last run with `SF Tests: Re-run Failed Tests`.
+- **Load Recent Test Runs** — pull in the results of any recent async run, including runs started from a terminal, CI, or lost to a window reload.
 - **Jump to the failing line** — clicking a failed result opens the class at the stack-trace line, and every failure also lands in the Problems panel.
 - **Inline coverage gutter** on Apex `.cls` files — green for covered, red for uncovered. Applied straight from each run, and auto-loaded from the org when you open a class (toggleable via `sfTestRunner.showCoverageOnOpen`).
 - **Test results tree view** in the activity bar — pass/fail/runtime per method, grouped by class. Click a method to see its failure message and stack trace in the output channel.
@@ -24,6 +25,7 @@ Run Apex tests with inline coverage in the gutter, browse results in a sidebar t
 | `SF Tests: Run Tests in Current Class` | Run async tests for the currently open `.cls` via `sf apex run test`. |
 | `SF Tests: Re-run Last Class` | Re-run whichever class you tested most recently in this session. |
 | `SF Tests: Re-run Failed Tests` | Re-run only the failing methods from the last run. |
+| `SF Tests: Load Recent Test Runs` | Pick one of the org's recent async runs and load its results/coverage. |
 | `SF Tests: Refresh Coverage from Org` | Pull the most recent `ApexCodeCoverageAggregate` for the current class. |
 | `SF Tests: Clear Coverage Decorations` | Remove gutter highlights. |
 | `SF Tests: Select Target Org` | List orgs from `sf org list` and pick one for subsequent runs. |
@@ -51,7 +53,7 @@ Because we never embed your access token directly, your `sf` CLI auth is the sin
 ## Known limitations
 
 - After a run, the gutter shows that run's own coverage. The open-file auto-load and `Refresh Coverage from Org` read `ApexCodeCoverageAggregate`, which reflects the **most recent run that touched the class** in the org — whoever started it.
-- Test results only appear for runs started by this extension — tests kicked off from a terminal or CI aren't discovered.
+- Results appear automatically only for runs started by this extension; use `Load Recent Test Runs` to pull in anything else.
 - Classes only (trigger coverage not surfaced in the gutter yet).
 
 ## License

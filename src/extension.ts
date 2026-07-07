@@ -5,7 +5,7 @@ import { ApexTestCodeLensProvider } from './ui/codeLens';
 import { CoverageDecorator, classNameFromUri } from './ui/coverageDecorator';
 import { TestTreeProvider } from './ui/testTreeProvider';
 import { CommandHistoryProvider, copyCommandToClipboard } from './ui/commandHistoryProvider';
-import { CommandLogEntry, TestMethodResult, TestRunSummary } from './types';
+import { CommandLogEntry, CoverageInfo, TestMethodResult, TestRunSummary } from './types';
 import { RunGuard } from './runGuard';
 import { primaryFrame } from './salesforce/stackParser';
 
@@ -101,6 +101,7 @@ export function activate(context: vscode.ExtensionContext): void {
       return undefined;
     }),
     vscode.commands.registerCommand('sfTestRunner.rerunFailed', () => rerunFailed()),
+    vscode.commands.registerCommand('sfTestRunner.loadRecentRuns', () => loadRecentRuns()),
     vscode.commands.registerCommand(
       'sfTestRunner.refreshCoverage',
       (uri?: vscode.Uri, className?: string) => refreshCoverage(uri, className),
@@ -234,10 +235,7 @@ async function runTests(
         results.setRunning(true);
         progress.report({ message: 'Enqueueing async test run…' });
         const { summary, coverage: runCoverage } = await run(orgUsername, token);
-        results.setSummary(summary);
-        lastSummary = summary;
-        logSummary(summary);
-        await publishDiagnostics(summary);
+        await applyRunOutcome(summary, runCoverage);
 
         if (summary.failing > 0) {
           void vscode.window.showWarningMessage(
@@ -249,15 +247,6 @@ async function runTests(
           );
         }
 
-        // Decorate the classes UNDER TEST straight from the run's --code-coverage
-        // output — no post-run ApexCodeCoverageAggregate query.
-        progress.report({ message: 'Applying coverage…' });
-        for (const [, info] of runCoverage) {
-          coverage.setCoverage(info.className, info);
-        }
-        // The run wrote fresh coverage org-side — previous "absent" answers are stale.
-        coverageKnownAbsent.clear();
-        coverage.applyTo(vscode.window.activeTextEditor);
       },
     );
   } catch (err) {
@@ -268,6 +257,85 @@ async function runTests(
     } else {
       handleError(err);
     }
+  } finally {
+    runGuard.release();
+  }
+}
+
+/**
+ * Shared tail of every result-producing path (live run or loaded run): tree,
+ * last-summary state, log, Problems diagnostics, and gutter coverage straight
+ * from the run's own --code-coverage block (fresh org coverage also invalidates
+ * cached "no coverage" answers).
+ */
+async function applyRunOutcome(
+  summary: TestRunSummary,
+  runCoverage: Map<string, CoverageInfo>,
+): Promise<void> {
+  results.setSummary(summary);
+  lastSummary = summary;
+  logSummary(summary);
+  await publishDiagnostics(summary);
+  for (const [, info] of runCoverage) {
+    coverage.setCoverage(info.className, info);
+  }
+  coverageKnownAbsent.clear();
+  coverage.applyTo(vscode.window.activeTextEditor);
+}
+
+/**
+ * Surface runs this extension did NOT start (terminal, CI, another tool — or a
+ * run lost to a window reload): list the org's recent async runs, load the
+ * picked one through the normal result pipeline.
+ */
+async function loadRecentRuns(): Promise<void> {
+  const org = sfCli.getCurrentOrg();
+  if (!org) {
+    void vscode.window.showWarningMessage('Select a Salesforce org first (status bar).');
+    return;
+  }
+  if (!runGuard.tryAcquire()) {
+    void vscode.window.showWarningMessage('A test run is already in progress. Wait for it to finish.');
+    return;
+  }
+  try {
+    const runs = await vscode.window.withProgress(
+      { location: vscode.ProgressLocation.Window, title: 'SF Tests: loading recent runs…' },
+      () => sfCli.listRecentTestRuns(org.username),
+    );
+    if (runs.length === 0) {
+      void vscode.window.showInformationMessage('No async test runs found in the org.');
+      return;
+    }
+    const items = runs.map((r) => ({
+      label: `$(beaker) ${r.startTime ? new Date(r.startTime).toLocaleString() : r.testRunId}`,
+      description: `${r.status} · ${r.methodsFailed} failed / ${r.methodsCompleted} run · ${r.testRunId}`,
+      run: r,
+    }));
+    const pick = await vscode.window.showQuickPick(items, {
+      placeHolder: 'Load a recent test run (includes runs started outside VS Code)',
+      matchOnDescription: true,
+    });
+    if (!pick) return;
+    output.show(true);
+    output.appendLine(`▶ Loading test run ${pick.run.testRunId}…`);
+    await vscode.window.withProgress(
+      {
+        location: vscode.ProgressLocation.Notification,
+        title: `SF Tests: loading run ${pick.run.testRunId}`,
+        cancellable: true,
+      },
+      async (_progress, token) => {
+        const { summary, coverage: runCoverage } = await sfCli.getTestRun(
+          pick.run.testRunId,
+          org.username,
+          { cancellation: token },
+        );
+        await applyRunOutcome(summary, runCoverage);
+      },
+    );
+  } catch (err) {
+    if (!(err instanceof SfCliCancelledError)) handleError(err);
   } finally {
     runGuard.release();
   }

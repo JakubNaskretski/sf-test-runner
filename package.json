@@ -50,6 +50,11 @@
         "icon": "$(debug-rerun)"
       },
       {
+        "command": "sfTestRunner.loadRecentRuns",
+        "title": "SF Tests: Load Recent Test Runs",
+        "icon": "$(history)"
+      },
+      {
         "command": "sfTestRunner.refreshCoverage",
         "title": "SF Tests: Refresh Coverage from Org",
         "icon": "$(refresh)"
@@ -111,14 +116,19 @@
           "group": "navigation@2"
         },
         {
-          "command": "sfTestRunner.refreshCoverage",
+          "command": "sfTestRunner.loadRecentRuns",
           "when": "view == sfTestRunner.results",
           "group": "navigation@3"
         },
         {
-          "command": "sfTestRunner.selectOrg",
+          "command": "sfTestRunner.refreshCoverage",
           "when": "view == sfTestRunner.results",
           "group": "navigation@4"
+        },
+        {
+          "command": "sfTestRunner.selectOrg",
+          "when": "view == sfTestRunner.results",
+          "group": "navigation@5"
         },
         {
           "command": "sfTestRunner.clearCommandHistory",

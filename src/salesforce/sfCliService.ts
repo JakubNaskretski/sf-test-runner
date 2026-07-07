@@ -23,6 +23,15 @@ export interface TestRunResult {
   coverage: Map<string, CoverageInfo>;
 }
 
+/** One row of the org's recent-async-runs list (`ApexTestRunResult`). */
+export interface RecentTestRun {
+  testRunId: string;
+  status: string;
+  startTime: string;
+  methodsCompleted: number;
+  methodsFailed: number;
+}
+
 export { SfCliError, SfCliCancelledError };
 
 /**
@@ -140,6 +149,62 @@ export class SfCliService {
     const summary = mapTestResult(result);
     const coverage = mapRunCoverage(result?.coverage);
     return { summary, coverage };
+  }
+
+  /** List the org's most recent async test runs (whoever started them). */
+  async listRecentTestRuns(orgUsername: string, limit = 10): Promise<RecentTestRun[]> {
+    const soql =
+      'SELECT AsyncApexJobId, Status, StartTime, MethodsCompleted, MethodsFailed ' +
+      `FROM ApexTestRunResult ORDER BY StartTime DESC LIMIT ${limit}`;
+    const args = [
+      'data',
+      'query',
+      '--query',
+      soql,
+      '--use-tooling-api',
+      '--json',
+      '--target-org',
+      orgUsername,
+    ];
+    const parsed = await this.logged(args, {}, () => this.kit.runJson<any>(args));
+    const records: any[] = parsed.result?.records ?? [];
+    return records
+      .map((r) => ({
+        testRunId: String(r.AsyncApexJobId ?? ''),
+        status: String(r.Status ?? 'Unknown'),
+        startTime: String(r.StartTime ?? ''),
+        methodsCompleted: Number(r.MethodsCompleted ?? 0),
+        methodsFailed: Number(r.MethodsFailed ?? 0),
+      }))
+      .filter((r) => r.testRunId);
+  }
+
+  /**
+   * Fetch a finished run's full results + coverage by id — same envelope as a
+   * live run, so external/interrupted runs flow through the same mapping.
+   */
+  async getTestRun(
+    testRunId: string,
+    orgUsername: string,
+    options: RunOptions = {},
+  ): Promise<TestRunResult> {
+    const args = [
+      'apex',
+      'get',
+      'test',
+      '--test-run-id',
+      testRunId,
+      '--code-coverage',
+      '--result-format',
+      'json',
+      '--target-org',
+      orgUsername,
+    ];
+    const parsed = await this.logged(args, options, () =>
+      this.kit.runJson<any>(args, { signal: toSignal(options.cancellation) }),
+    );
+    const result = parsed?.result ?? parsed;
+    return { summary: mapTestResult(result), coverage: mapRunCoverage(result?.coverage) };
   }
 
   /**
