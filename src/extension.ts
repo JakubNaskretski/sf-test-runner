@@ -354,6 +354,12 @@ async function refreshCoverage(uri?: vscode.Uri, explicitName?: string): Promise
     return;
   }
 
+  // Join the auto-loader's in-flight bookkeeping: if it is already fetching this
+  // class (editor just opened), don't run a second concurrent coverage query.
+  const loadKey = className.toLowerCase();
+  if (coverageLoading.has(loadKey)) return;
+  coverageLoading.add(loadKey);
+  try {
   await vscode.window.withProgress(
     { location: vscode.ProgressLocation.Window, title: `Coverage: ${className}` },
     async () => {
@@ -379,6 +385,9 @@ async function refreshCoverage(uri?: vscode.Uri, explicitName?: string): Promise
       }
     },
   );
+  } finally {
+    coverageLoading.delete(loadKey);
+  }
 }
 
 async function maybeAutoLoadCoverage(editor: vscode.TextEditor | undefined): Promise<void> {

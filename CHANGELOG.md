@@ -2,6 +2,12 @@
 
 All notable changes to the "sf-test-runner" extension are documented here.
 
+## [0.4.1] - 2026-07-12
+
+### Fixed
+- **Org list loads once, not per trigger** — selecting an org, activation auto-select and the shared-org watcher used to each spawn their own `sf org list` when they fired together; they now share a single in-flight call. Double-clicking the status-bar org item no longer stacks a second "loading orgs…" toast and picker.
+- **No duplicate coverage queries** — Show/Refresh Coverage now skips its query when the automatic on-open loader is already fetching the same class.
+
 ## [0.4.0] - 2026-07-07
 
 ### Added

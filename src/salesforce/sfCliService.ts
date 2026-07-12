@@ -68,7 +68,18 @@ export class SfCliService {
     this.currentOrg = org;
   }
 
-  async listOrgs(): Promise<OrgInfo[]> {
+  /** Shared in-flight org list — the picker, activation auto-select and the
+   *  shared-org config watcher can all ask at the same moment; one `sf org list`
+   *  spawn serves every concurrent caller instead of one per caller. */
+  private listOrgsInflight?: Promise<OrgInfo[]>;
+
+  listOrgs(): Promise<OrgInfo[]> {
+    return (this.listOrgsInflight ??= this.doListOrgs().finally(() => {
+      this.listOrgsInflight = undefined;
+    }));
+  }
+
+  private async doListOrgs(): Promise<OrgInfo[]> {
     const kitOrgs = await this.logged(['org', 'list', '--skip-connection-status', '--json'], {}, () =>
       this.kit.listOrgs(),
     );

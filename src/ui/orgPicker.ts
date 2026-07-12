@@ -52,7 +52,21 @@ export class OrgPicker implements vscode.Disposable {
     this.watcher = onSharedOrgChange((username) => this.applyUsername(username));
   }
 
+  /** True while a picker flow is on screen — a double-click on the status bar
+   *  would otherwise stack a second progress toast and quick pick on the first. */
+  private pickerOpen = false;
+
   async showPicker(): Promise<void> {
+    if (this.pickerOpen) return;
+    this.pickerOpen = true;
+    try {
+      await this.doShowPicker();
+    } finally {
+      this.pickerOpen = false;
+    }
+  }
+
+  private async doShowPicker(): Promise<void> {
     let orgs: OrgInfo[];
     try {
       orgs = await vscode.window.withProgress(
