@@ -8,6 +8,7 @@ import { CommandHistoryProvider, copyCommandToClipboard } from './ui/commandHist
 import { CommandLogEntry, CoverageInfo, TestMethodResult, TestRunSummary } from './types';
 import { RunGuard } from './runGuard';
 import { primaryFrame } from './salesforce/stackParser';
+import { sameOrg } from './orgMatch';
 
 const LAST_SELECTED_ORG_KEY = 'sfTestRunner.lastSelectedOrgUsername';
 
@@ -22,6 +23,10 @@ let runGuard: RunGuard;
 let lastClassRun: string | null = null;
 /** The most recent run's summary, for "re-run failed only". */
 let lastSummary: TestRunSummary | null = null;
+/** The org `lastSummary` was produced against. "Re-run failed" refuses to
+ *  replay a run's failures against a DIFFERENT org, and a run finishing after an
+ *  org switch is labelled (not silently attributed to the current org) with it. */
+let lastRunOrg: string | null = null;
 /** Classes known to have no stored coverage, plus in-flight lookups — without
  *  this, every tab focus of an uncovered class spawns another `sf data query`. */
 const coverageKnownAbsent = new Set<string>();
@@ -48,8 +53,16 @@ export function activate(context: vscode.ExtensionContext): void {
   diagnostics = vscode.languages.createDiagnosticCollection('sfTestRunner');
   context.subscriptions.push(diagnostics);
 
+  // A TreeView (not just a data provider) so the results can carry a subtitle
+  // naming the org they came from — kept in sync on every tree change.
+  const resultsView = vscode.window.createTreeView('sfTestRunner.results', {
+    treeDataProvider: results,
+  });
   context.subscriptions.push(
-    vscode.window.registerTreeDataProvider('sfTestRunner.results', results),
+    resultsView,
+    results.onDidChangeTreeData(() => {
+      resultsView.message = results.headerMessage;
+    }),
     vscode.window.registerTreeDataProvider('sfTestRunner.commands', commands),
   );
 
@@ -66,6 +79,7 @@ export function activate(context: vscode.ExtensionContext): void {
       results.reset();
       diagnostics.clear();
       lastSummary = null;
+      lastRunOrg = null;
       lastClassRun = null;
       coverageKnownAbsent.clear();
       coverage.applyTo(vscode.window.activeTextEditor);
@@ -179,6 +193,18 @@ async function rerunFailed(): Promise<void> {
     void vscode.window.showInformationMessage('No previous run to re-run failures from.');
     return;
   }
+  // The last run may have targeted a different org (it can finish after an org
+  // switch, or the user switches before re-running). Re-running would replay
+  // that org's failures against the CURRENT org — refuse, naming both, instead
+  // of silently running cross-org.
+  const currentOrg = sfCli.getCurrentOrg()?.username;
+  if (lastRunOrg && !sameOrg(lastRunOrg, currentOrg)) {
+    void vscode.window.showWarningMessage(
+      `Last run targeted ${lastRunOrg}, but the current org is ${currentOrg ?? '(none)'}. ` +
+        `Switch back to ${lastRunOrg} to re-run its failures.`,
+    );
+    return;
+  }
   const failed = lastSummary.results.filter(
     (r) => r.outcome === 'Fail' || r.outcome === 'CompileFail',
   );
@@ -235,7 +261,7 @@ async function runTests(
         results.setRunning(true);
         progress.report({ message: 'Enqueueing async test run…' });
         const { summary, coverage: runCoverage } = await run(orgUsername, token);
-        await applyRunOutcome(summary, runCoverage);
+        await applyRunOutcome(summary, runCoverage, orgUsername);
 
         if (summary.failing > 0) {
           void vscode.window.showWarningMessage(
@@ -267,20 +293,31 @@ async function runTests(
  * last-summary state, log, Problems diagnostics, and gutter coverage straight
  * from the run's own --code-coverage block (fresh org coverage also invalidates
  * cached "no coverage" answers).
+ *
+ * `runOrgUsername` is the org the run actually targeted. Results, diagnostics
+ * and the log are surfaced regardless (a finished run is valuable, and the tree
+ * is labelled with its org), but the coverage cache/decorations are org-scoped
+ * and class-keyed only — so when the run's org is no longer current (it landed
+ * after an org switch), those writes are skipped rather than decorate the wrong
+ * org's files. `lastRunOrg` lets `rerunFailed` refuse a cross-org replay.
  */
 async function applyRunOutcome(
   summary: TestRunSummary,
   runCoverage: Map<string, CoverageInfo>,
+  runOrgUsername: string,
 ): Promise<void> {
-  results.setSummary(summary);
+  results.setSummary(summary, runOrgUsername);
   lastSummary = summary;
-  logSummary(summary);
+  lastRunOrg = runOrgUsername;
+  logSummary(summary, runOrgUsername);
   await publishDiagnostics(summary);
-  for (const [, info] of runCoverage) {
-    coverage.setCoverage(info.className, info);
+  if (sameOrg(runOrgUsername, sfCli.getCurrentOrg()?.username)) {
+    for (const [, info] of runCoverage) {
+      coverage.setCoverage(info.className, info);
+    }
+    coverageKnownAbsent.clear();
+    coverage.applyTo(vscode.window.activeTextEditor);
   }
-  coverageKnownAbsent.clear();
-  coverage.applyTo(vscode.window.activeTextEditor);
 }
 
 /**
@@ -331,7 +368,7 @@ async function loadRecentRuns(): Promise<void> {
           org.username,
           { cancellation: token },
         );
-        await applyRunOutcome(summary, runCoverage);
+        await applyRunOutcome(summary, runCoverage, org.username);
       },
     );
   } catch (err) {
@@ -365,6 +402,10 @@ async function refreshCoverage(uri?: vscode.Uri, explicitName?: string): Promise
     async () => {
       try {
         const cov = await sfCli.getCoverageForClass(className, org.username);
+        // Discard silently if the org switched while this query was in flight:
+        // the coverage cache is class-keyed only, so landing org-A coverage (or a
+        // false "known absent") under org B would decorate the wrong files.
+        if (!sameOrg(org.username, sfCli.getCurrentOrg()?.username)) return;
         if (!cov) {
           coverageKnownAbsent.add(className.toLowerCase());
           void vscode.window.showInformationMessage(
@@ -408,6 +449,10 @@ async function maybeAutoLoadCoverage(editor: vscode.TextEditor | undefined): Pro
   coverageLoading.add(key);
   try {
     const cov = await sfCli.getCoverageForClass(className, org.username);
+    // Best-effort background load: if the org switched while it was in flight,
+    // drop the result rather than decorate the new org's files with the old
+    // org's coverage or poison the known-absent set (cache is class-keyed only).
+    if (!sameOrg(org.username, sfCli.getCurrentOrg()?.username)) return;
     if (cov) {
       coverage.setCoverage(className, cov);
       coverage.applyTo(editor);
@@ -508,10 +553,10 @@ async function findApexFile(name: string, isTrigger: boolean): Promise<vscode.Ur
   return matches[0];
 }
 
-function logSummary(summary: TestRunSummary): void {
+function logSummary(summary: TestRunSummary, orgUsername: string): void {
   output.appendLine('');
   output.appendLine(
-    `Result: ${summary.status} · ${summary.passing}/${summary.testsRan} passed · ${summary.testTotalTime}ms`,
+    `Result: ${summary.status} · ${summary.passing}/${summary.testsRan} passed · ${summary.testTotalTime}ms · org ${orgUsername}`,
   );
   for (const r of summary.results) {
     const mark = r.outcome === 'Pass' ? '✓' : '✗';

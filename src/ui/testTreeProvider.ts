@@ -26,6 +26,7 @@ export class TestTreeProvider implements vscode.TreeDataProvider<Node> {
   readonly onDidChangeTreeData = this.emitter.event;
 
   private summary: TestRunSummary | null = null;
+  private summaryOrg: string | null = null;
   private running = false;
 
   setRunning(running: boolean): void {
@@ -33,8 +34,12 @@ export class TestTreeProvider implements vscode.TreeDataProvider<Node> {
     this.emitter.fire(undefined);
   }
 
-  setSummary(summary: TestRunSummary): void {
+  /** Record a run's results along with the org they came from, so a run that
+   *  finished after an org switch is labelled with its own org rather than
+   *  passing as current-org state (see `headerMessage`). */
+  setSummary(summary: TestRunSummary, orgUsername: string): void {
     this.summary = summary;
+    this.summaryOrg = orgUsername;
     this.running = false;
     this.emitter.fire(undefined);
   }
@@ -42,8 +47,18 @@ export class TestTreeProvider implements vscode.TreeDataProvider<Node> {
   /** Clear all results (used on org switch so stale results don't linger). */
   reset(): void {
     this.summary = null;
+    this.summaryOrg = null;
     this.running = false;
     this.emitter.fire(undefined);
+  }
+
+  /** View subtitle naming the org the shown results targeted. Drives the tree
+   *  view's `message` so a run that landed after an org switch can't be mistaken
+   *  for current-org state — the status bar shows the current org, this shows
+   *  the run's. Undefined while running or empty (no subtitle). */
+  get headerMessage(): string | undefined {
+    if (this.running || !this.summary || !this.summaryOrg) return undefined;
+    return `Results from ${this.summaryOrg}`;
   }
 
   getTreeItem(node: Node): vscode.TreeItem {

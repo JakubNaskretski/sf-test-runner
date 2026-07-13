@@ -8,6 +8,8 @@ import {
   orgBadge,
 } from '../kit/orgs';
 import { OrgInfo } from '../types';
+import { sameOrg } from '../orgMatch';
+import { GenerationGuard } from '../generationGuard';
 
 interface OrgQuickPickItem extends vscode.QuickPickItem {
   org: OrgInfo;
@@ -39,6 +41,10 @@ export class OrgPicker implements vscode.Disposable {
   /** Last-known org list, so a username from the shared setting can be resolved
    *  to a full OrgInfo for the status-bar label. */
   private knownOrgs: OrgInfo[] = [];
+
+  /** Orders `applyUsername`'s async list-refresh resolutions: a rapid external
+   *  switch A→B→C must not let B's slower resolution land after C's. */
+  private readonly applyGen = new GenerationGuard();
 
   constructor(private readonly sfCli: SfCliService) {
     this.statusBar = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 100);
@@ -121,10 +127,23 @@ export class OrgPicker implements vscode.Disposable {
       const effective = await migrateToSharedOrg(legacyUsername);
       const orgs = await this.sfCli.listOrgs();
       this.knownOrgs = orgs;
-      const preferred = effective
-        ? orgs.find((o) => o.username.toLowerCase() === effective.toLowerCase())
-        : undefined;
-      const startup = preferred ?? orgs.find((o) => o.isDefault) ?? orgs[0];
+
+      let startup: OrgInfo | undefined;
+      if (effective) {
+        // The shared setting names an org. Prefer its full OrgInfo, but if the
+        // list doesn't include it (that one org's auth expired, or a list
+        // hiccup) keep targeting the requested username via a minimal OrgInfo
+        // rather than silently retargeting to a different org — every sibling
+        // plugin still shows it, and a run fails honestly if the auth is really
+        // gone. Mirrors the shared-setting watcher's fallback in applyUsername.
+        startup =
+          orgs.find((o) => sameOrg(o.username, effective)) ??
+          { alias: effective, username: effective, instanceUrl: '', isDefault: false };
+      } else {
+        // Genuinely-empty shared setting: seed from the CLI default (or first).
+        startup = orgs.find((o) => o.isDefault) ?? orgs[0];
+      }
+
       if (startup) {
         // If nothing was persisted yet, adopt the startup pick into the shared
         // setting so the rest of the family sees it.
@@ -141,13 +160,17 @@ export class OrgPicker implements vscode.Disposable {
   /** React to a shared-setting change: resolve the username to a known org
    *  (refresh the list if we can't), update sfCli + status bar, fire the event. */
   private applyUsername(username: string | undefined): void {
+    // Claim a generation synchronously at handler entry. A newer switch that
+    // arrives while our list refresh is in flight bumps this, so the stale
+    // resolution below yields to the newer event — the latest event wins.
+    const gen = this.applyGen.next();
     if (!username) {
       this.sfCli.setCurrentOrg(undefined);
       this.refreshLabel();
       this.emitter.fire(undefined);
       return;
     }
-    const found = this.knownOrgs.find((o) => o.username.toLowerCase() === username.toLowerCase());
+    const found = this.knownOrgs.find((o) => sameOrg(o.username, username));
     if (found) {
       this.sfCli.setCurrentOrg(found);
       this.refreshLabel();
@@ -159,8 +182,10 @@ export class OrgPicker implements vscode.Disposable {
     void this.sfCli
       .listOrgs()
       .then((orgs) => {
+        // Superseded by a newer switch while the list loaded — drop this result.
+        if (!this.applyGen.isCurrent(gen)) return;
         this.knownOrgs = orgs;
-        const org = orgs.find((o) => o.username.toLowerCase() === username.toLowerCase());
+        const org = orgs.find((o) => sameOrg(o.username, username));
         // Fall back to a minimal OrgInfo so the target is still usable even if
         // the list doesn't include it (e.g. auth known only to another plugin).
         const resolved: OrgInfo = org ?? {
@@ -174,6 +199,7 @@ export class OrgPicker implements vscode.Disposable {
         this.emitter.fire(resolved);
       })
       .catch(() => {
+        if (!this.applyGen.isCurrent(gen)) return;
         const resolved: OrgInfo = { alias: username, username, instanceUrl: '', isDefault: false };
         this.sfCli.setCurrentOrg(resolved);
         this.refreshLabel();

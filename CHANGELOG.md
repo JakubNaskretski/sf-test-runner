@@ -2,6 +2,12 @@
 
 All notable changes to the "sf-test-runner" extension are documented here.
 
+## [0.4.2] - 2026-07-13
+
+### Fixed
+- Test results and coverage that finish after an org switch no longer decorate the new org's context: cross-org coverage is discarded, the results view is labeled with the org it ran against, and **Re-run Failed** refuses to replay another org's failures — naming both orgs — instead of silently running them against the current one.
+- On activation, when the shared org isn't in the local auth list the plugin keeps targeting it (matching its sibling plugins) instead of silently switching to the CLI default; rapid external org switches now apply in order (latest wins).
+
 ## [0.4.1] - 2026-07-12
 
 ### Fixed
