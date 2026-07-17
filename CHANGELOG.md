@@ -2,6 +2,12 @@
 
 All notable changes to the "sf-test-runner" extension are documented here.
 
+## [0.5.0] - 2026-07-17
+
+### Added
+- **The org picker opens instantly.** The org list is cached — including across window reloads — so picking a target org no longer waits on a `sf org list` call. The picker still refreshes in the background while open, so an org you just authenticated appears in the list by itself a moment later.
+- New ↻ button on the org picker and a new `SF Tests: Refresh Org List` command in the palette to force-refresh the cached list at any time.
+
 ## [0.4.2] - 2026-07-13
 
 ### Fixed

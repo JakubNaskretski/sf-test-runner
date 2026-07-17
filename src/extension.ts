@@ -40,7 +40,9 @@ export function activate(context: vscode.ExtensionContext): void {
   sfCli = new SfCliService(output);
   context.subscriptions.push(sfCli);
 
-  orgPicker = new OrgPicker(sfCli);
+  // globalState persists the org-list cache so the picker opens instantly in a
+  // fresh window.
+  orgPicker = new OrgPicker(sfCli, context.globalState);
   context.subscriptions.push(orgPicker);
 
   coverage = new CoverageDecorator();
@@ -128,6 +130,7 @@ export function activate(context: vscode.ExtensionContext): void {
         await context.globalState.update(LAST_SELECTED_ORG_KEY, org.username);
       }
     }),
+    vscode.commands.registerCommand('sfTestRunner.refreshOrgs', () => orgPicker.refreshOrgs()),
     vscode.commands.registerCommand('sfTestRunner.openTestResult', (r?: TestMethodResult) =>
       openTestResult(r),
     ),
