@@ -2,7 +2,7 @@
   "name": "sf-test-runner",
   "displayName": "Salesforce Test Runner",
   "description": "Run Apex tests with inline coverage in the gutter, browse results in a sidebar tree, and see every sf CLI command we execute in a collapsible panel. Reuses your existing sf CLI auth.",
-  "version": "0.5.0",
+  "version": "0.6.0",
   "publisher": "Skrety",
   "icon": "icons/plugin-icon.png",
   "license": "MIT",
@@ -50,6 +50,21 @@
         "icon": "$(debug-rerun)"
       },
       {
+        "command": "sfTestRunner.runAllLocal",
+        "title": "SF Tests: Run All Local Tests",
+        "icon": "$(run-all)"
+      },
+      {
+        "command": "sfTestRunner.runClassFromTree",
+        "title": "SF Tests: Run Class Tests",
+        "icon": "$(play)"
+      },
+      {
+        "command": "sfTestRunner.rerunMethodFromTree",
+        "title": "SF Tests: Re-run This Method",
+        "icon": "$(play)"
+      },
+      {
         "command": "sfTestRunner.loadRecentRuns",
         "title": "SF Tests: Load Recent Test Runs",
         "icon": "$(history)"
@@ -63,6 +78,11 @@
         "command": "sfTestRunner.clearCoverage",
         "title": "SF Tests: Clear Coverage Decorations",
         "icon": "$(clear-all)"
+      },
+      {
+        "command": "sfTestRunner.toggleInlineCoverage",
+        "title": "SF Tests: Toggle Inline Coverage",
+        "icon": "$(eye)"
       },
       {
         "command": "sfTestRunner.selectOrg",
@@ -104,6 +124,14 @@
           "when": "false"
         },
         {
+          "command": "sfTestRunner.runClassFromTree",
+          "when": "false"
+        },
+        {
+          "command": "sfTestRunner.rerunMethodFromTree",
+          "when": "false"
+        },
+        {
           "command": "sfTestRunner.copyCommand",
           "when": "false"
         }
@@ -135,6 +163,10 @@
           "group": "navigation@5"
         },
         {
+          "command": "sfTestRunner.runAllLocal",
+          "when": "view == sfTestRunner.results"
+        },
+        {
           "command": "sfTestRunner.clearCommandHistory",
           "when": "view == sfTestRunner.commands",
           "group": "navigation@1"
@@ -147,6 +179,16 @@
       ],
       "view/item/context": [
         {
+          "command": "sfTestRunner.runClassFromTree",
+          "when": "view == sfTestRunner.results && viewItem == class",
+          "group": "inline"
+        },
+        {
+          "command": "sfTestRunner.rerunMethodFromTree",
+          "when": "view == sfTestRunner.results && viewItem == method",
+          "group": "inline"
+        },
+        {
           "command": "sfTestRunner.copyCommand",
           "when": "view == sfTestRunner.commands && viewItem == sfCommand",
           "group": "inline"
@@ -155,7 +197,7 @@
       "editor/title": [
         {
           "command": "sfTestRunner.runCurrentClass",
-          "when": "resourceExtname == .cls",
+          "when": "resourceExtname == .cls && sfTestRunner.activeFileHasTests",
           "group": "navigation"
         }
       ]
@@ -198,12 +240,22 @@
           "type": "boolean",
           "default": true,
           "description": "When an Apex class is opened, auto-load its most recent coverage from the org."
+        },
+        "sfTestRunner.showInlineCoverage": {
+          "type": "boolean",
+          "default": true,
+          "description": "Paint covered/uncovered lines in the gutter and editor. When off, coverage is still reported as numbers (run summary, output channel, Refresh Coverage) but nothing is highlighted."
+        },
+        "sfTestRunner.autoShowOutput": {
+          "type": "boolean",
+          "default": true,
+          "description": "Reveal the SF Tests output channel when a test run starts or a recent run is loaded. Opening a test result always reveals it."
         }
       }
     }
   },
   "scripts": {
-    "vscode:prepublish": "npm run build",
+    "vscode:prepublish": "node esbuild.js --production",
     "build": "node esbuild.js",
     "watch": "node esbuild.js --watch",
     "package": "npx -y @vscode/vsce@latest package --no-dependencies --allow-missing-repository",

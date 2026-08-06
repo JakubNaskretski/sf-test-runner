@@ -3,14 +3,20 @@ import { SfCliCancelledError, SfCliService, TestRunResult } from './salesforce/s
 import { OrgPicker } from './ui/orgPicker';
 import { ApexTestCodeLensProvider } from './ui/codeLens';
 import { CoverageDecorator, classNameFromUri } from './ui/coverageDecorator';
-import { TestTreeProvider } from './ui/testTreeProvider';
+import { TestTreeProvider, classNameFromNode, methodFromNode } from './ui/testTreeProvider';
 import { CommandHistoryProvider, copyCommandToClipboard } from './ui/commandHistoryProvider';
-import { CommandLogEntry, CoverageInfo, TestMethodResult, TestRunSummary } from './types';
+import { CommandLogEntry, CoverageInfo, OrgInfo, TestMethodResult, TestRunSummary } from './types';
 import { RunGuard } from './runGuard';
 import { primaryFrame } from './salesforce/stackParser';
+import { overallCoveragePercent } from './salesforce/coverageMapping';
+import { hasApexTests } from './salesforce/testMethods';
+import { isLikelyProduction } from './kit/orgs';
 import { sameOrg } from './orgMatch';
 
 const LAST_SELECTED_ORG_KEY = 'sfTestRunner.lastSelectedOrgUsername';
+/** Gates the editor-title run button: an Apex file with no tests in it gets no
+ *  button, so the toolbar isn't offering a run that can only fail. */
+const HAS_TESTS_CONTEXT_KEY = 'sfTestRunner.activeFileHasTests';
 
 let output: vscode.OutputChannel;
 let sfCli: SfCliService;
@@ -31,6 +37,16 @@ let lastRunOrg: string | null = null;
  *  this, every tab focus of an uncovered class spawns another `sf data query`. */
 const coverageKnownAbsent = new Set<string>();
 const coverageLoading = new Set<string>();
+/** Classes whose background coverage lookup FAILED (as opposed to "no coverage
+ *  stored"). Without this, a persistent CLI failure (expired auth, org gone)
+ *  re-spawns `sf data query` on every tab focus. Cleared by anything that could
+ *  change the answer: a run, an explicit refresh, an org switch. */
+const coverageLoadFailed = new Set<string>();
+let coverageStatusItem: vscode.StatusBarItem;
+/** "Clear Coverage Decorations" is meant to stay cleared: without this, the next
+ *  tab focus auto-loads the coverage straight back. Reset by anything that means
+ *  the user wants coverage again (a run, an explicit refresh, an org switch). */
+let coverageCleared = false;
 
 export function activate(context: vscode.ExtensionContext): void {
   output = vscode.window.createOutputChannel('SF Tests');
@@ -84,9 +100,33 @@ export function activate(context: vscode.ExtensionContext): void {
       lastRunOrg = null;
       lastClassRun = null;
       coverageKnownAbsent.clear();
+      coverageLoadFailed.clear();
+      coverageCleared = false;
       coverage.applyTo(vscode.window.activeTextEditor);
     }),
   );
+
+  // One-click coverage visibility next to the org picker: `$(eye) 78%` for the
+  // active class when data is loaded, `$(eye-closed)` when painting is off.
+  coverageStatusItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 99);
+  coverageStatusItem.command = 'sfTestRunner.toggleInlineCoverage';
+  context.subscriptions.push(
+    coverageStatusItem,
+    coverage.onDidChange(() => updateCoverageStatus()),
+    vscode.workspace.onDidChangeConfiguration((e) => {
+      if (!e.affectsConfiguration('sfTestRunner.showInlineCoverage')) return;
+      // The toggle (or a hand edit of the setting) takes effect immediately:
+      // painting off wipes decorations but keeps the cache, on repaints from it.
+      const enabled = inlineCoverageEnabled();
+      coverage.setEnabled(enabled);
+      // Turning painting on is a request to see coverage — re-arm the auto-load
+      // for the file in front of the user (no-op when it's already cached).
+      if (enabled) void maybeAutoLoadCoverage(vscode.window.activeTextEditor);
+      updateCoverageStatus();
+    }),
+  );
+  coverage.setEnabled(inlineCoverageEnabled());
+  updateCoverageStatus();
 
   context.subscriptions.push(
     vscode.languages.registerCodeLensProvider(
@@ -98,7 +138,15 @@ export function activate(context: vscode.ExtensionContext): void {
   context.subscriptions.push(
     vscode.window.onDidChangeActiveTextEditor((editor) => {
       coverage.applyTo(editor);
+      updateCoverageStatus();
+      void updateHasTestsContext(editor);
       void maybeAutoLoadCoverage(editor);
+    }),
+    // A file becomes (or stops being) a test class as it is edited; the save is
+    // the point where re-scanning is cheap and the answer is stable.
+    vscode.workspace.onDidSaveTextDocument((doc) => {
+      const editor = vscode.window.activeTextEditor;
+      if (editor && doc === editor.document) void updateHasTestsContext(editor);
     }),
   );
 
@@ -117,12 +165,53 @@ export function activate(context: vscode.ExtensionContext): void {
       return undefined;
     }),
     vscode.commands.registerCommand('sfTestRunner.rerunFailed', () => rerunFailed()),
+    vscode.commands.registerCommand('sfTestRunner.runAllLocal', () => runAllLocalTests()),
+    vscode.commands.registerCommand('sfTestRunner.runClassFromTree', (node?: any) => {
+      const className = classNameFromNode(node);
+      if (!className) {
+        void vscode.window.showInformationMessage(
+          'Run a class from the Test Results tree, not the Command Palette.',
+        );
+        return undefined;
+      }
+      if (refuseCrossOrgRerun()) return undefined;
+      return runForClass(className);
+    }),
+    vscode.commands.registerCommand('sfTestRunner.rerunMethodFromTree', (node?: any) => {
+      const method = methodFromNode(node);
+      if (!method) {
+        void vscode.window.showInformationMessage(
+          'Run a test method from the Test Results tree, not the Command Palette.',
+        );
+        return undefined;
+      }
+      if (refuseCrossOrgRerun()) return undefined;
+      return runTestMethod(method.className, method.methodName);
+    }),
     vscode.commands.registerCommand('sfTestRunner.loadRecentRuns', () => loadRecentRuns()),
     vscode.commands.registerCommand(
       'sfTestRunner.refreshCoverage',
       (uri?: vscode.Uri, className?: string) => refreshCoverage(uri, className),
     ),
-    vscode.commands.registerCommand('sfTestRunner.clearCoverage', () => coverage.clear()),
+    vscode.commands.registerCommand('sfTestRunner.clearCoverage', () => {
+      coverageCleared = true;
+      coverage.clear();
+    }),
+    vscode.commands.registerCommand('sfTestRunner.toggleInlineCoverage', async () => {
+      const cfg = vscode.workspace.getConfiguration('sfTestRunner');
+      const next = !cfg.get<boolean>('showInlineCoverage', true);
+      // Write to the scope that currently defines the value — a Global write
+      // under a workspace-level setting would be shadowed and the button dead.
+      const info = cfg.inspect<boolean>('showInlineCoverage');
+      const target =
+        info?.workspaceFolderValue !== undefined
+          ? vscode.ConfigurationTarget.WorkspaceFolder
+          : info?.workspaceValue !== undefined
+            ? vscode.ConfigurationTarget.Workspace
+            : vscode.ConfigurationTarget.Global;
+      // The onDidChangeConfiguration listener does the repaint + status refresh.
+      await cfg.update('showInlineCoverage', next, target);
+    }),
     vscode.commands.registerCommand('sfTestRunner.selectOrg', async () => {
       await orgPicker.showPicker();
       const org = sfCli.getCurrentOrg();
@@ -142,9 +231,16 @@ export function activate(context: vscode.ExtensionContext): void {
     vscode.commands.registerCommand('sfTestRunner.showOutput', () => output.show(true)),
   );
 
+  void updateHasTestsContext(vscode.window.activeTextEditor);
+
   const remembered = context.globalState.get<string>(LAST_SELECTED_ORG_KEY);
-  void orgPicker.autoSelectDefault(remembered);
-  void maybeAutoLoadCoverage(vscode.window.activeTextEditor);
+  // The auto-load needs the org, which autoSelectDefault only settles
+  // asynchronously — chained, not fired alongside, or it always no-ops. Still
+  // non-blocking: activation returns while this runs.
+  void orgPicker
+    .autoSelectDefault(remembered)
+    .then(() => maybeAutoLoadCoverage(vscode.window.activeTextEditor))
+    .catch(() => undefined);
 }
 
 export function deactivate(): void {
@@ -191,23 +287,22 @@ async function runTestMethod(className?: string, methodName?: string): Promise<v
   );
 }
 
+async function runAllLocalTests(): Promise<void> {
+  await runTests(
+    'all local tests',
+    (orgUsername, token) => sfCli.runAllLocalTests(orgUsername, { cancellation: token }),
+    // lastClassRun stays put: "Re-run Last Class" means the last CLASS, and a
+    // whole-org run is not one.
+    () => undefined,
+  );
+}
+
 async function rerunFailed(): Promise<void> {
   if (!lastSummary) {
     void vscode.window.showInformationMessage('No previous run to re-run failures from.');
     return;
   }
-  // The last run may have targeted a different org (it can finish after an org
-  // switch, or the user switches before re-running). Re-running would replay
-  // that org's failures against the CURRENT org — refuse, naming both, instead
-  // of silently running cross-org.
-  const currentOrg = sfCli.getCurrentOrg()?.username;
-  if (lastRunOrg && !sameOrg(lastRunOrg, currentOrg)) {
-    void vscode.window.showWarningMessage(
-      `Last run targeted ${lastRunOrg}, but the current org is ${currentOrg ?? '(none)'}. ` +
-        `Switch back to ${lastRunOrg} to re-run its failures.`,
-    );
-    return;
-  }
+  if (refuseCrossOrgRerun()) return;
   const failed = lastSummary.results.filter(
     (r) => r.outcome === 'Fail' || r.outcome === 'CompileFail',
   );
@@ -224,10 +319,10 @@ async function rerunFailed(): Promise<void> {
 }
 
 /**
- * Shared run pipeline. Claims the single-run guard synchronously (rejecting
- * overlapping runs), captures the org username at start and threads it into the
- * run, decorates the classes under test from the run's INLINE coverage, and
- * publishes failure diagnostics.
+ * Shared run pipeline for every entry point. Confirms a production target,
+ * claims the single-run guard (rejecting overlapping runs), captures the org
+ * username at start and threads it into the run, decorates the classes under
+ * test from the run's INLINE coverage, and publishes failure diagnostics.
  */
 async function runTests(
   label: string,
@@ -239,8 +334,11 @@ async function runTests(
     void vscode.window.showWarningMessage('Select a Salesforce org first (status bar).');
     return;
   }
-  // Claim the guard synchronously, before any await, so two entry points can't
-  // both start a run.
+  // Ask before anything else happens, so backing out leaves no state behind: no
+  // guard held, no output revealed, no toast.
+  if (!(await confirmProductionRun(org))) return;
+  // tryAcquire is atomic, so of two entry points racing here only one starts a
+  // run — the other is told one is already in progress.
   if (!runGuard.tryAcquire()) {
     void vscode.window.showWarningMessage('A test run is already in progress. Wait for it to finish.');
     return;
@@ -250,7 +348,7 @@ async function runTests(
   // mid-run org switch can't retarget the run.
   const orgUsername = org.username;
   onStart();
-  output.show(true);
+  maybeShowOutput();
   output.appendLine(`▶ Running tests: ${label}…`);
 
   try {
@@ -266,13 +364,15 @@ async function runTests(
         const { summary, coverage: runCoverage } = await run(orgUsername, token);
         await applyRunOutcome(summary, runCoverage, orgUsername);
 
+        const pct = overallCoveragePercent(runCoverage);
+        const covered = pct === null ? '' : ` · coverage ${pct}%`;
         if (summary.failing > 0) {
           void vscode.window.showWarningMessage(
-            `${summary.failing} of ${summary.testsRan} tests failed (${label}).`,
+            `${summary.failing} of ${summary.testsRan} tests failed (${label})${covered}.`,
           );
         } else {
           void vscode.window.showInformationMessage(
-            `All ${summary.testsRan} tests passed (${label}, ${summary.testTotalTime}ms).`,
+            `All ${summary.testsRan} tests passed (${label}, ${summary.testTotalTime}ms)${covered}.`,
           );
         }
 
@@ -289,6 +389,39 @@ async function runTests(
   } finally {
     runGuard.release();
   }
+}
+
+/**
+ * The displayed results may target a different org than the current one (a run
+ * can finish after an org switch). Re-running anything FROM those results —
+ * failed set, a tree class, a tree method — would replay one org's outcome
+ * against another; refuse, naming both, instead of silently running cross-org.
+ */
+function refuseCrossOrgRerun(): boolean {
+  const currentOrg = sfCli.getCurrentOrg()?.username;
+  if (!lastRunOrg || sameOrg(lastRunOrg, currentOrg)) return false;
+  void vscode.window.showWarningMessage(
+    `Last run targeted ${lastRunOrg}, but the current org is ${currentOrg ?? '(none)'}. ` +
+      `Switch back to ${lastRunOrg} to re-run from its results.`,
+  );
+  return true;
+}
+
+/**
+ * Modal confirmation before any run against production. The kit treats an
+ * unknown org as production too (over-warn), so a run fired before the org list
+ * has settled still asks. Anything other than the confirm button — Cancel, Esc,
+ * dismissal — aborts the run silently; the user knows what they just declined.
+ */
+async function confirmProductionRun(org: OrgInfo): Promise<boolean> {
+  if (!isLikelyProduction(org)) return true;
+  const confirm = 'Run Tests';
+  const pick = await vscode.window.showWarningMessage(
+    `Run tests against PRODUCTION org ${org.alias}?`,
+    { modal: true, detail: org.username },
+    confirm,
+  );
+  return pick === confirm;
 }
 
 /**
@@ -309,16 +442,21 @@ async function applyRunOutcome(
   runCoverage: Map<string, CoverageInfo>,
   runOrgUsername: string,
 ): Promise<void> {
-  results.setSummary(summary, runOrgUsername);
+  results.setSummary(summary, runOrgUsername, overallCoveragePercent(runCoverage));
   lastSummary = summary;
   lastRunOrg = runOrgUsername;
-  logSummary(summary, runOrgUsername);
+  logSummary(summary, runOrgUsername, runCoverage);
   await publishDiagnostics(summary);
   if (sameOrg(runOrgUsername, sfCli.getCurrentOrg()?.username)) {
-    for (const [, info] of runCoverage) {
-      coverage.setCoverage(info.className, info);
-    }
+    // Org-gated like the caches below: a cross-org run landing late must not
+    // undo a "Clear Coverage Decorations" the user did under the current org.
+    coverageCleared = false;
+    // Cache the run's coverage even while painting is off — the decorator's
+    // enabled flag decides what shows, and toggling back on must paint THIS
+    // run's data, not whatever was cached before the toggle.
+    coverage.setCoverageMany(runCoverage.values());
     coverageKnownAbsent.clear();
+    coverageLoadFailed.clear();
     coverage.applyTo(vscode.window.activeTextEditor);
   }
 }
@@ -357,7 +495,7 @@ async function loadRecentRuns(): Promise<void> {
       matchOnDescription: true,
     });
     if (!pick) return;
-    output.show(true);
+    maybeShowOutput();
     output.appendLine(`▶ Loading test run ${pick.run.testRunId}…`);
     await vscode.window.withProgress(
       {
@@ -393,6 +531,10 @@ async function refreshCoverage(uri?: vscode.Uri, explicitName?: string): Promise
     void vscode.window.showWarningMessage('No Apex class selected.');
     return;
   }
+  // Asking for coverage undoes an earlier "Clear Coverage Decorations", and an
+  // explicit ask is the retry signal for a class whose background load failed.
+  coverageCleared = false;
+  coverageLoadFailed.delete(className.toLowerCase());
 
   // Join the auto-loader's in-flight bookkeeping: if it is already fetching this
   // class (editor just opened), don't run a second concurrent coverage query.
@@ -417,14 +559,23 @@ async function refreshCoverage(uri?: vscode.Uri, explicitName?: string): Promise
           return;
         }
         coverageKnownAbsent.delete(className.toLowerCase());
-        coverage.setCoverage(className, cov);
-        coverage.applyTo(vscode.window.activeTextEditor);
         const total = cov.numLinesCovered + cov.numLinesUncovered;
         const pct = total === 0 ? 0 : Math.round((cov.numLinesCovered * 100) / total);
+        coverage.setCoverage(className, cov);
+        coverage.applyTo(vscode.window.activeTextEditor);
+        if (!inlineCoverageEnabled()) {
+          // Nothing to look at in the gutter, so report the figure the user asked for.
+          void vscode.window.showInformationMessage(
+            `${className}: ${pct}% covered (${cov.numLinesCovered}/${total} lines).`,
+          );
+        }
         output.appendLine(
-          `Coverage for ${className}: ${cov.numLinesCovered}/${total} lines (${pct}%)`,
+          `Coverage for ${className}: ${pct}% covered (${cov.numLinesCovered}/${total} lines)`,
         );
       } catch (err) {
+        // A failed query says nothing about whether the class has coverage — it
+        // must not feed the known-absent cache, and it is an error, not the
+        // "no coverage stored" note.
         handleError(err);
       }
     },
@@ -441,6 +592,9 @@ async function maybeAutoLoadCoverage(editor: vscode.TextEditor | undefined): Pro
   if (!org) return;
   const cfg = vscode.workspace.getConfiguration('sfTestRunner');
   if (!cfg.get<boolean>('showCoverageOnOpen', true)) return;
+  if (!inlineCoverageEnabled()) return;
+  // The user cleared the decorations on purpose; don't pull them back in.
+  if (coverageCleared) return;
   const className = classNameFromUri(editor.document.uri);
   if (!className) return;
   if (coverage.has(className)) {
@@ -448,7 +602,9 @@ async function maybeAutoLoadCoverage(editor: vscode.TextEditor | undefined): Pro
     return;
   }
   const key = className.toLowerCase();
-  if (coverageKnownAbsent.has(key) || coverageLoading.has(key)) return;
+  if (coverageKnownAbsent.has(key) || coverageLoadFailed.has(key) || coverageLoading.has(key)) {
+    return;
+  }
   coverageLoading.add(key);
   try {
     const cov = await sfCli.getCoverageForClass(className, org.username);
@@ -462,11 +618,51 @@ async function maybeAutoLoadCoverage(editor: vscode.TextEditor | undefined): Pro
     } else {
       coverageKnownAbsent.add(key);
     }
-  } catch {
-    // best-effort
+  } catch (err) {
+    // Background load nobody asked for: log it, no toast. A failed query is not
+    // a "no coverage" answer, so it must not reach coverageKnownAbsent — but it
+    // does back off further auto-attempts until a run/refresh/org switch.
+    coverageLoadFailed.add(key);
+    const message = err instanceof Error ? err.message : String(err);
+    output.appendLine(`Coverage lookup for ${className} failed: ${message}`);
   } finally {
     coverageLoading.delete(key);
   }
+}
+
+/** Status bar: current class's coverage when loaded, eye/eye-closed for the
+ *  painting toggle state. Clicking flips `showInlineCoverage`. */
+function updateCoverageStatus(): void {
+  if (!inlineCoverageEnabled()) {
+    coverageStatusItem.text = '$(eye-closed) Coverage';
+    coverageStatusItem.tooltip = 'Inline coverage is hidden — click to show';
+    coverageStatusItem.show();
+    return;
+  }
+  const editor = vscode.window.activeTextEditor;
+  const className = editor ? classNameFromUri(editor.document.uri) : null;
+  const info = className ? coverage.get(className) : undefined;
+  if (info) {
+    const total = info.numLinesCovered + info.numLinesUncovered;
+    const pct = total === 0 ? 0 : Math.round((info.numLinesCovered * 100) / total);
+    coverageStatusItem.text = `$(eye) ${pct}%`;
+    coverageStatusItem.tooltip =
+      `${info.className}: ${pct}% covered (${info.numLinesCovered}/${total} lines) — ` +
+      'click to hide inline coverage';
+  } else {
+    coverageStatusItem.text = '$(eye) Coverage';
+    coverageStatusItem.tooltip = 'Inline coverage is shown — click to hide';
+  }
+  coverageStatusItem.show();
+}
+
+/** Keep `sfTestRunner.activeFileHasTests` in step with the active editor: true
+ *  only for a `.cls` whose source actually declares tests. */
+async function updateHasTestsContext(editor: vscode.TextEditor | undefined): Promise<void> {
+  const doc = editor?.document;
+  const hasTests =
+    !!doc && doc.fileName.toLowerCase().endsWith('.cls') && hasApexTests(doc.getText());
+  await vscode.commands.executeCommand('setContext', HAS_TESTS_CONTEXT_KEY, hasTests);
 }
 
 function openTestResult(r?: TestMethodResult): void {
@@ -556,7 +752,11 @@ async function findApexFile(name: string, isTrigger: boolean): Promise<vscode.Ur
   return matches[0];
 }
 
-function logSummary(summary: TestRunSummary, orgUsername: string): void {
+function logSummary(
+  summary: TestRunSummary,
+  orgUsername: string,
+  runCoverage: Map<string, CoverageInfo>,
+): void {
   output.appendLine('');
   output.appendLine(
     `Result: ${summary.status} · ${summary.passing}/${summary.testsRan} passed · ${summary.testTotalTime}ms · org ${orgUsername}`,
@@ -568,6 +768,31 @@ function logSummary(summary: TestRunSummary, orgUsername: string): void {
       output.appendLine(`     ${r.message}`);
     }
   }
+
+  const covered = [...runCoverage.values()].sort((a, b) => a.className.localeCompare(b.className));
+  if (covered.length > 0) {
+    const overall = overallCoveragePercent(runCoverage);
+    output.appendLine(`Coverage${overall === null ? '' : ` (${overall}% overall)`}:`);
+    for (const info of covered) {
+      const total = info.numLinesCovered + info.numLinesUncovered;
+      const pct = total === 0 ? 0 : Math.round((info.numLinesCovered * 100) / total);
+      output.appendLine(
+        `  ${info.className}: ${pct}% covered (${info.numLinesCovered}/${total} lines)`,
+      );
+    }
+  }
+}
+
+/** Gutter/line painting is opt-out; the numbers are reported either way. */
+function inlineCoverageEnabled(): boolean {
+  return vscode.workspace.getConfiguration('sfTestRunner').get<boolean>('showInlineCoverage', true);
+}
+
+/** Reveal the output channel for work the user started, unless they turned the
+ *  auto-reveal off. Opening a test result reveals it regardless. */
+function maybeShowOutput(): void {
+  const cfg = vscode.workspace.getConfiguration('sfTestRunner');
+  if (cfg.get<boolean>('autoShowOutput', true)) output.show(true);
 }
 
 function handleError(err: unknown): void {

@@ -20,7 +20,7 @@ import { OrgInfo } from './sfCli';
  * picker and a status-bar item factory.
  */
 
-export type OrgKind = 'prod' | 'sandbox' | 'scratch' | 'unknown';
+export type OrgKind = 'prod' | 'sandbox' | 'scratch' | 'dev' | 'unknown';
 
 /** The one cross-plugin setting key. Contributed (schema-declared) by
  *  sf-org-deploy-helper; every other plugin reads/writes it undeclared. */
@@ -28,8 +28,8 @@ export const SHARED_ORG_SETTING = 'skrety.salesforce.targetOrg';
 
 /**
  * Classify an org. Trusts the scratch/sandbox flags from `sf org list` first
- * (set from the bucket the org came from), then URL markers, and defaults to
- * PRODUCTION for a known-but-unmarked org.
+ * (set from the bucket the org came from), then URL markers, then the row's
+ * edition, and defaults to PRODUCTION for a known-but-unmarked org.
  *
  * Returns 'unknown' ONLY when the org itself is undefined (list not loaded yet /
  * lookup failed). `isLikelyProduction` maps 'unknown' to true so an unknown org
@@ -42,6 +42,10 @@ export function kindOf(org: OrgInfo | undefined): OrgKind {
   const url = (org.instanceUrl ?? '').toLowerCase();
   if (/\.scratch\./.test(url)) return 'scratch';
   if (/\.sandbox\.|\.cs\d+\.|test\.salesforce\.com/.test(url)) return 'sandbox';
+  // A Developer Edition org lives on a plain `.my.salesforce.com` host, so the
+  // default-to-prod fallback used to badge every dev org PROD. The edition comes
+  // straight from the `sf org list` row, so it only fires when we really know.
+  if (/developer edition/i.test(org.orgEdition ?? '')) return 'dev';
   return 'prod';
 }
 
@@ -61,6 +65,7 @@ export function orgBadge(org: OrgInfo | undefined): string {
     case 'prod': return 'PROD';
     case 'sandbox': return 'SBX';
     case 'scratch': return 'SCR';
+    case 'dev': return 'DEV';
     default: return 'ORG';
   }
 }

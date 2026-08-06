@@ -6,6 +6,10 @@ export interface OrgInfo {
   /** From `sf org list` buckets — drive the status-bar PROD/SBX/SCR badge. */
   isSandbox?: boolean;
   isScratch?: boolean;
+  /** Edition string from the `sf org list` row (e.g. "Developer Edition"). Must
+   *  survive the mapping in `doListOrgs`, or `kindOf` badges a dev org PROD and
+   *  the production confirmation fires on every run against it. */
+  orgEdition?: string;
 }
 
 export interface TestMethodResult {

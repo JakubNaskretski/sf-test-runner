@@ -12,3 +12,5 @@ tsconfig.json
 **/eslint.config.*
 .vscode-test/**
 *.vsix
+out-test/**
+tsconfig.test.json

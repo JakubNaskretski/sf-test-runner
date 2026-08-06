@@ -2,6 +2,31 @@
 
 All notable changes to the "sf-test-runner" extension are documented here.
 
+## [0.6.0] - 2026-08-06
+
+### Added
+- **Run All Local Tests** — run the org's whole local suite (`--test-level RunLocalTests`, i.e. everything except managed-package tests) from the palette or the Test Results view’s “…” menu.
+- **Re-run from the tree** — inline play buttons on each class and method in the Test Results view.
+- **Production runs ask first** — a run against an org classified as production now needs a modal confirmation; backing out leaves no state behind. An org whose kind isn't known yet is treated as production.
+- **Coverage as a number** — each run's overall line coverage appears in the completion toast and the Test Results view subtitle, with a per-class breakdown in the output channel.
+- `DEV` org badge for Developer Edition orgs, which used to be badged `PROD` (they sit on a plain `.my.salesforce.com` host, so only the edition from `sf org list` distinguishes them).
+- New settings: `sfTestRunner.showInlineCoverage` (paint the gutter, or report coverage as numbers only) and `sfTestRunner.autoShowOutput` (reveal the output channel when a run starts).
+- **Coverage toggle in the status bar** — an eye item next to the org picker shows the active class's coverage percentage and flips `showInlineCoverage` with one click (`SF Tests: Toggle Inline Coverage`). Changing the setting mid-session now unpaints/repaints open editors immediately.
+
+### Fixed
+- A failed `sf org list`, coverage query, or recent-runs query is no longer read as an answer: an error envelope from the CLI is reported as the failure it is, instead of surfacing as "you have no orgs" (which could wipe a saved org selection), a class with no coverage, or an org with no recent runs.
+- A background coverage lookup that fails stops retrying on every tab focus; a run, an explicit `Refresh Coverage from Org`, or an org switch re-arms it.
+- Re-running from the Test Results tree refuses cross-org replays the same way **Re-run Failed** does.
+- **Clear Coverage Decorations** stays cleared — the open-file auto-load no longer pulls the highlights straight back on the next tab switch.
+- Coverage the extension auto-loads in the background no longer marks a class as having no coverage when the query itself failed; the failure is logged to the output channel rather than shown as a toast.
+- On activation, the coverage auto-load now waits for the org to settle instead of firing alongside it and always no-opping.
+- The editor title bar play button only appears for `.cls` files that actually contain tests, so the toolbar isn't offering a run that can only fail.
+- The org-list failure toast now carries the CLI's own message and no longer reads as an empty list.
+
+### Packaging
+- `vscode:prepublish` builds in production mode.
+- Test build output (`out-test/`, `tsconfig.test.json`) excluded from the packaged extension.
+
 ## [0.5.0] - 2026-07-17
 
 ### Added

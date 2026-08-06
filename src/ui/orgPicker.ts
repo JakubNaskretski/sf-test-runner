@@ -171,7 +171,11 @@ export class OrgPicker implements vscode.Disposable {
       // and reports its own outcome (avoids double error toasts).
       if (!this.listGen.isCurrent(gen)) return;
       if (this.activePick) this.activePick.busy = false;
-      void vscode.window.showErrorMessage(`SF Tests: failed to refresh org list: ${err?.message ?? err}`);
+      // The CLI's own message, never "no orgs found" — a failed list and an
+      // empty list need different fixes.
+      void vscode.window.showErrorMessage(
+        `SF Tests: could not list orgs: ${err?.message ?? err}`,
+      );
     }
   }
 
@@ -205,7 +209,9 @@ export class OrgPicker implements vscode.Disposable {
       qp.busy = false;
       if (qp.items.length === 0) {
         qp.hide();
-        void vscode.window.showErrorMessage(`SF Tests: failed to list orgs: ${err?.message ?? err}`);
+        void vscode.window.showErrorMessage(
+          `SF Tests: could not list orgs: ${err?.message ?? err}`,
+        );
       }
       return;
     }
@@ -227,12 +233,47 @@ export class OrgPicker implements vscode.Disposable {
    * Resolve the effective startup org: shared setting (migrated from the legacy
    * key on first run) → CLI default → first org. Sets it on sfCli and fires
    * onOrgChanged so decorations/state start consistent.
+   *
+   * Cache-first: a remembered org that the persisted list already knows is
+   * applied synchronously and revalidated in the background, so activation never
+   * waits on `sf org list` and a failed list can't discard a perfectly good org.
+   * Only an unrecognised username (or none) has to await a live list.
    */
   async autoSelectDefault(legacyUsername?: string): Promise<void> {
     try {
       const effective = await migrateToSharedOrg(legacyUsername);
-      const orgs = await this.sfCli.listOrgs();
-      this.setKnownOrgs(orgs);
+      const cached = effective
+        ? this.knownOrgs.find((o) => sameOrg(o.username, effective))
+        : undefined;
+      if (cached) {
+        this.applyStartupOrg(cached);
+        void this.reconcileStartupOrg(cached.username);
+        return;
+      }
+
+      const gen = this.listGen.next();
+      let orgs: OrgInfo[];
+      try {
+        orgs = await this.sfCli.listOrgs();
+      } catch (err: any) {
+        // Nothing cached to fall back on. A named org still targets by username
+        // (the list may be broken, not the org); with nothing named there is no
+        // target at all, so say why instead of starting silently org-less.
+        if (effective) {
+          this.applyStartupOrg({
+            alias: effective,
+            username: effective,
+            instanceUrl: '',
+            isDefault: false,
+          });
+        } else {
+          void vscode.window.showErrorMessage(
+            `SF Tests: could not list orgs: ${err?.message ?? err}`,
+          );
+        }
+        return;
+      }
+      if (this.listGen.isCurrent(gen)) this.setKnownOrgs(orgs);
 
       let startup: OrgInfo | undefined;
       if (effective) {
@@ -254,13 +295,41 @@ export class OrgPicker implements vscode.Disposable {
         // If nothing was persisted yet, adopt the startup pick into the shared
         // setting so the rest of the family sees it.
         if (!getSharedOrg()) await setSharedOrg(startup.username);
-        this.sfCli.setCurrentOrg(startup);
-        this.refreshLabel();
-        this.emitter.fire(startup);
+        this.applyStartupOrg(startup);
       }
     } catch {
       // silent on startup
     }
+  }
+
+  /** Apply a startup org everywhere: sfCli (so a run started immediately sees
+   *  it), the status bar, and listeners. */
+  private applyStartupOrg(org: OrgInfo): void {
+    this.sfCli.setCurrentOrg(org);
+    this.refreshLabel();
+    this.emitter.fire(org);
+  }
+
+  /** Background revalidate behind a cache-resolved startup org: refresh the list
+   *  and swap in the live entry for the same username (alias/URL may have moved
+   *  on). A failure keeps the cached org — we already have a usable target. No
+   *  onOrgChanged: the org didn't change, only its details. */
+  private async reconcileStartupOrg(username: string): Promise<void> {
+    const gen = this.listGen.next();
+    let orgs: OrgInfo[];
+    try {
+      orgs = await this.sfCli.listOrgs();
+    } catch {
+      return;
+    }
+    if (!this.listGen.isCurrent(gen)) return; // superseded by a newer fetch
+    this.setKnownOrgs(orgs);
+    const live = orgs.find((o) => sameOrg(o.username, username));
+    // The user may have switched orgs while this was in flight — only reconcile
+    // while the cache-resolved org is still the target.
+    if (!live || !sameOrg(this.sfCli.getCurrentOrg()?.username, username)) return;
+    this.sfCli.setCurrentOrg(live);
+    this.refreshLabel();
   }
 
   /** React to a shared-setting change: resolve the username to a known org

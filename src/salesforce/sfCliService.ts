@@ -3,6 +3,8 @@ import {
   SfCliService as KitSfCliService,
   SfCliCancelledError,
   SfCliError,
+  envelopeError,
+  isErrorEnvelope,
 } from '../kit/sfCli';
 import { CommandLogEntry, CoverageInfo, OrgInfo, TestRunSummary } from '../types';
 import { mapRunCoverage } from './coverageMapping';
@@ -90,6 +92,7 @@ export class SfCliService {
       isDefault: o.isDefaultUsername || false,
       isSandbox: o.isSandbox,
       isScratch: o.isScratch,
+      orgEdition: o.orgEdition,
     }));
   }
 
@@ -118,6 +121,15 @@ export class SfCliService {
       testArgs.push('--tests', t);
     }
     return this.runTests(testArgs, orgUsername, options);
+  }
+
+  /**
+   * Run the org's whole local suite (`RunLocalTests` — every test in the org
+   * except managed-package ones) against `orgUsername`. Same flags, logging and
+   * cancellation as a class run; only the selector differs.
+   */
+  async runAllLocalTests(orgUsername: string, options: RunOptions = {}): Promise<TestRunResult> {
+    return this.runTests(['--test-level', 'RunLocalTests'], orgUsername, options);
   }
 
   private async runTests(
@@ -178,7 +190,12 @@ export class SfCliService {
       orgUsername,
     ];
     const parsed = await this.logged(args, {}, () => this.kit.runJson<any>(args));
-    const records: any[] = parsed.result?.records ?? [];
+    // Same discipline as getCoverageForClass: an error envelope must surface as
+    // an error, not read as "the org has no recent runs".
+    if (isErrorEnvelope(parsed) || !Array.isArray(parsed.result.records)) {
+      throw envelopeError(parsed ?? {}, 'data query');
+    }
+    const records: any[] = parsed.result.records;
     return records
       .map((r) => ({
         testRunId: String(r.AsyncApexJobId ?? ''),
@@ -242,7 +259,14 @@ export class SfCliService {
       orgUsername,
     ];
     const parsed = await this.logged(args, {}, () => this.kit.runJson<any>(args));
-    const row = parsed.result?.records?.[0];
+    // An error envelope (expired auth, bad query) carries name/message and no
+    // result — reading `records` off it reported the class as "no coverage",
+    // which reads as 0% instead of "we could not ask". null means ONLY that the
+    // org has no aggregate coverage row for this class.
+    if (isErrorEnvelope(parsed) || !Array.isArray(parsed.result.records)) {
+      throw envelopeError(parsed ?? {}, 'data query');
+    }
+    const row = parsed.result.records[0];
     if (!row) return null;
 
     const coverage = row.Coverage ?? { coveredLines: [], uncoveredLines: [] };
