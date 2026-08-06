@@ -44,6 +44,8 @@ export interface OrgInfo {
   isSandbox?: boolean;
   /** True when `sf org list` reported this org under its scratchOrgs bucket (or the entry is flagged). */
   isScratch?: boolean;
+  /** Edition string from the `sf org list` row (e.g. "Developer Edition"). */
+  orgEdition?: string;
 }
 
 export class SfCliError extends Error {
@@ -96,6 +98,25 @@ export interface SfJsonEnvelope<R> {
   name?: string;
   message?: string;
   actions?: string[];
+}
+
+/** Build the SfCliError an error envelope describes — the CLI's own name,
+ *  message and suggested `actions[]`, so callers report the real failure instead
+ *  of guessing from a missing `result`. */
+export function envelopeError<R>(json: SfJsonEnvelope<R>, what: string): SfCliError {
+  const msg = stripAnsi((json.message ?? '').trim()) || `sf ${what} returned no result (status ${json.status ?? '?'})`;
+  const err = new SfCliError(json.name ? `${json.name}: ${msg}` : msg);
+  err.errorName = json.name;
+  err.actions = cleanActions(json.actions);
+  return err;
+}
+
+/** True when the envelope reports a CLI-level failure: a non-zero `status`, or
+ *  no `result` at all. NOT usable for `sf apex run test`, which exits (and
+ *  reports) 100 for failing tests while carrying a complete result. */
+export function isErrorEnvelope<R>(json: SfJsonEnvelope<R> | undefined): boolean {
+  if (!json || json.result == null) return true;
+  return typeof json.status === 'number' && json.status !== 0;
 }
 
 export interface RunOptions {
@@ -243,14 +264,17 @@ export class SfCliService {
     // That probe is the slow part of `sf org list` (seconds per org), and an org
     // that fails it can drop out of the result — which used to wipe the saved
     // selection. We never read connectedStatus, so skipping it is pure win.
-    const json = await this.runJson<{
-      result: {
-        nonScratchOrgs?: OrgInfo[];
-        scratchOrgs?: OrgInfo[];
-        sandboxes?: OrgInfo[];
-        other?: OrgInfo[];
-      };
-    }>(['org', 'list', '--skip-connection-status', '--json'], { timeoutMs: opts.timeoutMs });
+    const json = await this.runJson<SfJsonEnvelope<{
+      nonScratchOrgs?: OrgInfo[];
+      scratchOrgs?: OrgInfo[];
+      sandboxes?: OrgInfo[];
+      other?: OrgInfo[];
+    }>>(['org', 'list', '--skip-connection-status', '--json'], { timeoutMs: opts.timeoutMs });
+    // A CLI-level failure (expired auth, broken config) carries name/message and
+    // no result. Reading the buckets off `{}` turned that into "you have no
+    // orgs" — indistinguishable from a genuinely empty list, and enough to wipe
+    // a caller's saved selection. A present-but-empty result still yields [].
+    if (isErrorEnvelope(json)) throw envelopeError(json, 'org list');
     const r = json.result ?? {};
     // Merge the buckets by username, tagging scratch/sandbox from the bucket the
     // org came from (the most reliable signal) so production classification is
@@ -298,11 +322,7 @@ export class SfCliService {
    */
   unwrapResult<R>(json: SfJsonEnvelope<R>, what: string): R {
     if (json.result != null) return json.result;
-    const msg = stripAnsi((json.message ?? '').trim()) || `sf ${what} returned no result (status ${json.status ?? '?'})`;
-    const err = new SfCliError(json.name ? `${json.name}: ${msg}` : msg);
-    err.errorName = json.name;
-    err.actions = cleanActions(json.actions);
-    throw err;
+    throw envelopeError(json, what);
   }
 
   /** Quote args containing whitespace so the echoed command is copy-pasteable. */

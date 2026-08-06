@@ -27,6 +27,7 @@ export class TestTreeProvider implements vscode.TreeDataProvider<Node> {
 
   private summary: TestRunSummary | null = null;
   private summaryOrg: string | null = null;
+  private summaryCoverage: number | null = null;
   private running = false;
 
   setRunning(running: boolean): void {
@@ -36,10 +37,12 @@ export class TestTreeProvider implements vscode.TreeDataProvider<Node> {
 
   /** Record a run's results along with the org they came from, so a run that
    *  finished after an org switch is labelled with its own org rather than
-   *  passing as current-org state (see `headerMessage`). */
-  setSummary(summary: TestRunSummary, orgUsername: string): void {
+   *  passing as current-org state (see `headerMessage`). `coveragePercent` is the
+   *  run's overall line coverage when it reported any. */
+  setSummary(summary: TestRunSummary, orgUsername: string, coveragePercent?: number | null): void {
     this.summary = summary;
     this.summaryOrg = orgUsername;
+    this.summaryCoverage = coveragePercent ?? null;
     this.running = false;
     this.emitter.fire(undefined);
   }
@@ -48,6 +51,7 @@ export class TestTreeProvider implements vscode.TreeDataProvider<Node> {
   reset(): void {
     this.summary = null;
     this.summaryOrg = null;
+    this.summaryCoverage = null;
     this.running = false;
     this.emitter.fire(undefined);
   }
@@ -58,7 +62,8 @@ export class TestTreeProvider implements vscode.TreeDataProvider<Node> {
    *  the run's. Undefined while running or empty (no subtitle). */
   get headerMessage(): string | undefined {
     if (this.running || !this.summary || !this.summaryOrg) return undefined;
-    return `Results from ${this.summaryOrg}`;
+    const coverage = this.summaryCoverage === null ? '' : ` · coverage ${this.summaryCoverage}%`;
+    return `Results from ${this.summaryOrg}${coverage}`;
   }
 
   getTreeItem(node: Node): vscode.TreeItem {
@@ -125,6 +130,17 @@ export class TestTreeProvider implements vscode.TreeDataProvider<Node> {
     }
     return [];
   }
+}
+
+/** A `view/item/context` command receives the tree NODE, not its TreeItem, so
+ *  the re-run actions read their target straight off it. Duck-typed because the
+ *  node classes are private to this module. */
+export function classNameFromNode(node: any): string | null {
+  return node?.kind === 'class' && typeof node.className === 'string' ? node.className : null;
+}
+
+export function methodFromNode(node: any): TestMethodResult | null {
+  return node?.kind === 'method' && node.result ? (node.result as TestMethodResult) : null;
 }
 
 function iconForOutcome(outcome: TestMethodResult['outcome']): string {

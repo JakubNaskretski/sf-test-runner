@@ -100,6 +100,24 @@ export function coverageFromEntry(entry: RunCoverageEntry | undefined): Coverage
   };
 }
 
+/**
+ * Aggregate line coverage across a run's classes, as a whole percent. Classes
+ * carrying no line counts contribute nothing; null when none of them do, so
+ * callers can leave the figure out rather than claim a misleading 0%.
+ */
+export function overallCoveragePercent(coverage: Map<string, CoverageInfo>): number | null {
+  let covered = 0;
+  let total = 0;
+  for (const info of coverage.values()) {
+    const lines = info.numLinesCovered + info.numLinesUncovered;
+    if (!Number.isFinite(lines) || lines <= 0) continue;
+    covered += info.numLinesCovered;
+    total += lines;
+  }
+  if (total === 0) return null;
+  return Math.round((covered * 100) / total);
+}
+
 function sanitizeLines(lines: unknown): number[] {
   if (!Array.isArray(lines)) return [];
   return lines.map(Number).filter((n) => Number.isFinite(n));

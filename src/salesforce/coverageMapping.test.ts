@@ -1,6 +1,17 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mapRunCoverage, coverageFromEntry } from './coverageMapping';
+import { mapRunCoverage, coverageFromEntry, overallCoveragePercent } from './coverageMapping';
+import { CoverageInfo } from '../types';
+
+function info(className: string, covered: number, uncovered: number): CoverageInfo {
+  return {
+    className,
+    numLinesCovered: covered,
+    numLinesUncovered: uncovered,
+    coveredLines: [],
+    uncoveredLines: [],
+  };
+}
 
 test('maps modern lines-map shape to covered/uncovered', () => {
   const block = {
@@ -83,4 +94,31 @@ test('coverageFromEntry ignores non-numeric line keys', () => {
   const info = coverageFromEntry({ name: 'X', lines: { '1': 1, foo: 0 as any } });
   assert.deepEqual(info!.coveredLines, [1]);
   assert.deepEqual(info!.uncoveredLines, []);
+});
+
+test('overallCoveragePercent aggregates across classes and rounds', () => {
+  const map = new Map([
+    ['a', info('A', 7, 3)],
+    ['b', info('B', 1, 2)],
+  ]);
+  // 8 covered of 13 lines = 61.5% → 62%
+  assert.equal(overallCoveragePercent(map), 62);
+});
+
+test('overallCoveragePercent returns null with no line data', () => {
+  assert.equal(overallCoveragePercent(new Map()), null);
+  assert.equal(overallCoveragePercent(new Map([['a', info('A', 0, 0)]])), null);
+});
+
+test('overallCoveragePercent skips classes with unusable counts', () => {
+  const map = new Map([
+    ['a', info('A', 5, 5)],
+    ['b', info('B', Number.NaN, 4)],
+  ]);
+  assert.equal(overallCoveragePercent(map), 50);
+});
+
+test('overallCoveragePercent handles fully covered and fully uncovered', () => {
+  assert.equal(overallCoveragePercent(new Map([['a', info('A', 4, 0)]])), 100);
+  assert.equal(overallCoveragePercent(new Map([['a', info('A', 0, 4)]])), 0);
 });
