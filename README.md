@@ -16,7 +16,7 @@ Run Apex tests with inline coverage in the gutter, browse results in a sidebar t
 - **Production runs ask first** — a run against an org classified as production needs a modal confirmation before anything starts.
 - **Test results tree view** in the activity bar — pass/fail/runtime per method, grouped by class. Click a method to see its failure message and stack trace in the output channel.
 - **`sf` command panel** — a second view in the activity bar that lists every CLI invocation. Each entry is collapsible to show the full command, args, duration, and any error message. Right-click → **Copy Command** to drop the exact invocation into your clipboard.
-- **Org picker** in the status bar — click to choose between any org `sf org list` knows about, with a PROD/SBX/SCR/DEV badge (production gets a warning tint; Developer Edition orgs are badged DEV rather than PROD). The list is cached so the picker opens instantly, refreshes in the background, and can be force-refreshed with the ↻ button or `SF Tests: Refresh Org List`. Selection is shared with the other Skrety Salesforce extensions.
+- **Org picker** in the status bar — click to choose between any org `sf org list` knows about, with a PROD/SBX/SCR/DEV badge (production gets a warning tint; Developer Edition orgs are badged DEV rather than PROD). The list is cached so the picker opens instantly, refreshes in the background, and can be force-refreshed with the ↻ button or `SF Tests: Refresh Org List`. The choice is this extension's own; set `sfTestRunner.syncOrgWithFamily` to `true` to follow (and publish) the org shared with the other Skrety Salesforce extensions.
 
 ## Requirements
 
@@ -51,6 +51,7 @@ Run Apex tests with inline coverage in the gutter, browse results in a sidebar t
 | `sfTestRunner.showCoverageOnOpen` | `true` | Auto-load coverage when opening a `.cls` file. |
 | `sfTestRunner.showInlineCoverage` | `true` | Paint covered/uncovered lines in the gutter and editor. When off, coverage is still reported as numbers (run summary, output channel, Refresh Coverage) but nothing is highlighted. |
 | `sfTestRunner.autoShowOutput` | `true` | Reveal the SF Tests output channel when a test run starts or a recent run is loaded. Opening a test result always reveals it. |
+| `sfTestRunner.syncOrgWithFamily` | `false` | Follow and publish the Salesforce org shared across the Skrety SF plugins (`skrety.salesforce.targetOrg`). Off: this extension keeps its own org and ignores switches made in sibling plugins. |
 
 ## How it talks to Salesforce
 

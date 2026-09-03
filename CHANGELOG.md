@@ -2,6 +2,12 @@
 
 All notable changes to the "sf-test-runner" extension are documented here.
 
+## [0.7.0] - 2026-09-03
+
+### Changed
+- **Your target org is now your own.** Switching the org in another Skrety Salesforce extension no longer changes the org tests run against, and picking an org here no longer moves theirs. Prefer the old shared behavior? Turn on `sfTestRunner.syncOrgWithFamily` (default **off**) — it takes effect immediately, follows the shared org (`skrety.salesforce.targetOrg`) and publishes your picks to it. Clearing the shared org never blanks this extension's target.
+- On the first start after updating you keep the org you were already using: the org shared with the family is adopted once as this extension's own.
+
 ## [0.6.0] - 2026-08-06
 
 ### Added

@@ -13,7 +13,6 @@ import { hasApexTests } from './salesforce/testMethods';
 import { isLikelyProduction } from './kit/orgs';
 import { sameOrg } from './orgMatch';
 
-const LAST_SELECTED_ORG_KEY = 'sfTestRunner.lastSelectedOrgUsername';
 /** Gates the editor-title run button: an Apex file with no tests in it gets no
  *  button, so the toolbar isn't offering a run that can only fail. */
 const HAS_TESTS_CONTEXT_KEY = 'sfTestRunner.activeFileHasTests';
@@ -88,7 +87,8 @@ export function activate(context: vscode.ExtensionContext): void {
     sfCli.onCommand((entry) => commands.record(entry)),
   );
 
-  // Org switch (our pick OR an external shared-setting change) invalidates all
+  // Org switch (our own pick, or an adopted family switch when
+  // `sfTestRunner.syncOrgWithFamily` is on) invalidates all
   // org-scoped state: cached coverage, the results tree, decorations, and test
   // failure diagnostics.
   context.subscriptions.push(
@@ -212,13 +212,9 @@ export function activate(context: vscode.ExtensionContext): void {
       // The onDidChangeConfiguration listener does the repaint + status refresh.
       await cfg.update('showInlineCoverage', next, target);
     }),
-    vscode.commands.registerCommand('sfTestRunner.selectOrg', async () => {
-      await orgPicker.showPicker();
-      const org = sfCli.getCurrentOrg();
-      if (org) {
-        await context.globalState.update(LAST_SELECTED_ORG_KEY, org.username);
-      }
-    }),
+    // The picker owns the remembered-org key: it writes it on every applied
+    // change (pick, family follow, startup), so there's nothing to persist here.
+    vscode.commands.registerCommand('sfTestRunner.selectOrg', () => orgPicker.showPicker()),
     vscode.commands.registerCommand('sfTestRunner.refreshOrgs', () => orgPicker.refreshOrgs()),
     vscode.commands.registerCommand('sfTestRunner.openTestResult', (r?: TestMethodResult) =>
       openTestResult(r),
@@ -233,12 +229,11 @@ export function activate(context: vscode.ExtensionContext): void {
 
   void updateHasTestsContext(vscode.window.activeTextEditor);
 
-  const remembered = context.globalState.get<string>(LAST_SELECTED_ORG_KEY);
   // The auto-load needs the org, which autoSelectDefault only settles
   // asynchronously — chained, not fired alongside, or it always no-ops. Still
   // non-blocking: activation returns while this runs.
   void orgPicker
-    .autoSelectDefault(remembered)
+    .autoSelectDefault()
     .then(() => maybeAutoLoadCoverage(vscode.window.activeTextEditor))
     .catch(() => undefined);
 }

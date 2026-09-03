@@ -2,7 +2,7 @@
   "name": "sf-test-runner",
   "displayName": "Salesforce Test Runner",
   "description": "Run Apex tests with inline coverage in the gutter, browse results in a sidebar tree, and see every sf CLI command we execute in a collapsible panel. Reuses your existing sf CLI auth.",
-  "version": "0.6.0",
+  "version": "0.7.0",
   "publisher": "Skrety",
   "icon": "icons/plugin-icon.png",
   "license": "MIT",
@@ -250,6 +250,12 @@
           "type": "boolean",
           "default": true,
           "description": "Reveal the SF Tests output channel when a test run starts or a recent run is loaded. Opening a test result always reveals it."
+        },
+        "sfTestRunner.syncOrgWithFamily": {
+          "type": "boolean",
+          "default": false,
+          "scope": "machine",
+          "markdownDescription": "Follow and publish the Salesforce org shared across the Skrety SF plugins (`skrety.salesforce.targetOrg`). Off: this plugin keeps its own org and ignores switches made in sibling plugins."
         }
       }
     }
