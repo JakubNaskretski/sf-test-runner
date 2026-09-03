@@ -1,12 +1,6 @@
 import * as vscode from 'vscode';
 import { SfCliService } from '../salesforce/sfCliService';
-import {
-  getSharedOrg,
-  setSharedOrg,
-  onSharedOrgChange,
-  migrateToSharedOrg,
-  orgBadge,
-} from '../kit/orgs';
+import { getSharedOrg, setSharedOrg, onSharedOrgChange, orgBadge } from '../kit/orgs';
 import { OrgInfo } from '../types';
 import { sameOrg } from '../orgMatch';
 import { GenerationGuard } from '../generationGuard';
@@ -19,38 +13,64 @@ interface OrgQuickPickItem extends vscode.QuickPickItem {
  *  picker opens instantly (even in a fresh window) while a live list loads. */
 const ORG_LIST_CACHE_KEY = 'sfTestRunner.cachedOrgList';
 
+/** globalState key holding THIS plugin's own target org — the source of truth,
+ *  rewritten on every applied org change (pick, family follow, startup). */
+const LAST_SELECTED_ORG_KEY = 'sfTestRunner.lastSelectedOrgUsername';
+
+/** globalState flag for the one-time "adopt the family org into our own store"
+ *  migration run when upgrading from the always-shared releases. */
+const ORG_SYNC_MIGRATED_KEY = 'sfTestRunner.orgSyncMigrated.v1';
+
+/** Opt-in switch for following/publishing the family-shared org. Default off. */
+const SYNC_SETTING = 'sfTestRunner.syncOrgWithFamily';
+
 /**
  * Target-org selection for the test runner.
  *
- * The chosen org is now stored in the family-shared setting
- * `skrety.salesforce.targetOrg` (machine scope) via the kit helpers, so switching
- * the org in any Skrety SF plugin switches it here too. The
- * legacy private globalState key (`sfTestRunner.lastSelectedOrgUsername`) is used
- * once to seed the shared setting on first run, then only as a read fallback.
+ * This plugin keeps its OWN org in the private globalState key
+ * `sfTestRunner.lastSelectedOrgUsername`; that key is the source of truth and is
+ * rewritten on every applied change. Following (and publishing) the
+ * family-shared setting `skrety.salesforce.targetOrg` is opt-in per plugin via
+ * `sfTestRunner.syncOrgWithFamily` (default OFF):
+ *   - off — a switch made in a sibling plugin is ignored, and our own picks stay
+ *     local;
+ *   - on  — the shared org is adopted whenever it changes, and a pick here is
+ *     published to it, i.e. the pre-toggle behaviour. One family-wide carve-out:
+ *     an EMPTY shared value is never adopted, so a sibling clearing the family
+ *     org can't blank a working target.
+ * The flag is read at EVENT time, so flipping it takes effect without a reload,
+ * and flipping it ON adopts the shared org straight away.
  *
  * The org list itself is cached (in memory + globalState): opening the picker
  * shows the cached orgs immediately and revalidates via `sf org list` in the
  * background, swapping the items in place when the live list lands. Explicit
  * refresh: the picker's ↻ title button or `SF Tests: Refresh Org List`.
  *
- * `onOrgChanged` fires for BOTH our own picks and external writes (another plugin
- * or the user editing settings.json) — a config watcher is the single change
- * source — so the extension's org-switch invalidation (clear coverage cache,
- * results, decorations) runs no matter who flipped the org.
+ * `onOrgChanged` fires for BOTH our own picks (applied directly — with sync off
+ * nothing else would) and adopted family switches, so the extension's org-switch
+ * invalidation (clear coverage cache, results, decorations) runs no matter who
+ * flipped the org. A pick under sync-on writes the shared setting, whose watcher
+ * then sees the value we already hold and de-dups instead of firing twice.
  *
- * This plugin does NOT contribute the setting schema; sf-org-deploy-helper owns
- * it.
+ * This plugin does NOT contribute the shared setting's schema; sf-org-deploy-helper
+ * owns it. The `syncOrgWithFamily` toggle above IS ours.
  */
 export class OrgPicker implements vscode.Disposable {
   private readonly statusBar: vscode.StatusBarItem;
   private readonly emitter = new vscode.EventEmitter<OrgInfo | undefined>();
   readonly onOrgChanged = this.emitter.event;
   private readonly watcher: vscode.Disposable;
+  private readonly syncWatcher: vscode.Disposable;
 
   /** Last-known org list (persisted): backs the picker for instant opens and
    *  lets a username from the shared setting resolve to a full OrgInfo for the
    *  status-bar label without a fetch. */
   private knownOrgs: OrgInfo[] = [];
+
+  /** In-memory mirror of the private globalState key: what THIS plugin targets.
+   *  Read synchronously for the picker's "• current" marker and for the
+   *  shared-watcher de-dup, so an adopt can't race the persisted write. */
+  private privateOrg: string | undefined;
 
   /** Orders `applyUsername`'s async list-refresh resolutions: a rapid external
    *  switch A→B→C must not let B's slower resolution land after C's. */
@@ -81,15 +101,52 @@ export class OrgPicker implements vscode.Disposable {
       );
     }
 
+    this.privateOrg = globalState?.get<string>(LAST_SELECTED_ORG_KEY);
+
     this.statusBar = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 100);
     this.statusBar.command = 'sfTestRunner.selectOrg';
     this.statusBar.tooltip = 'SF Tests: select target org';
     this.refreshLabel();
     this.statusBar.show();
 
-    // External edits to the shared org (another plugin, or settings.json) route
-    // through the same path as our own picks.
-    this.watcher = onSharedOrgChange((username) => this.applyUsername(username));
+    // External edits to the shared org (another plugin, or settings.json) are
+    // followed ONLY while sync is on. The flag is read here, at event time, so
+    // toggling it takes effect without a window reload.
+    this.watcher = onSharedOrgChange((username) => {
+      if (!this.syncEnabled()) return;
+      this.adoptShared(username);
+    });
+
+    // Flipping sync ON adopts the family org immediately; flipping it off just
+    // stops the following, leaving our current org alone.
+    this.syncWatcher = vscode.workspace.onDidChangeConfiguration((e) => {
+      if (!e.affectsConfiguration(SYNC_SETTING) || !this.syncEnabled()) return;
+      const shared = getSharedOrg();
+      if (shared) this.adoptShared(shared);
+    });
+  }
+
+  /** Opt-in family sync. Read on every use — never cached at registration. */
+  private syncEnabled(): boolean {
+    return vscode.workspace.getConfiguration().get<boolean>(SYNC_SETTING, false) === true;
+  }
+
+  /** Follow a family org switch. Skipped when it names what we already target —
+   *  that de-dup is what stops our own shared write (after a pick under sync-on)
+   *  from firing a second onOrgChanged — and when it is EMPTY: a sibling
+   *  clearing the family org must never blank our working target. */
+  private adoptShared(username: string | undefined): void {
+    if (!username) return;
+    if (sameOrg(username, this.privateOrg)) return;
+    this.applyUsername(username);
+  }
+
+  /** Record the plugin's own target org. The in-memory copy updates
+   *  synchronously; the persist is fire-and-forget (a storage failure only costs
+   *  the remembered org on the next start). */
+  private persistPrivateOrg(username: string | undefined): void {
+    this.privateOrg = username;
+    this.globalState?.update(LAST_SELECTED_ORG_KEY, username).then(undefined, () => {});
   }
 
   /** Update the in-memory + persisted org cache (persist is fire-and-forget; a
@@ -119,13 +176,22 @@ export class OrgPicker implements vscode.Disposable {
       const picked = qp.selectedItems[0];
       qp.hide();
       if (!picked) return;
-      // Persist to the shared setting; the config watcher fires onOrgChanged,
-      // which updates sfCli/status bar and triggers invalidation. Set sfCli
-      // synchronously too so a run started immediately after the pick sees the
-      // new org.
-      this.sfCli.setCurrentOrg(picked.org);
-      this.refreshLabel();
-      void setSharedOrg(picked.org.username);
+      // Apply directly: with sync off nothing else fires onOrgChanged, and the
+      // extension's org-switch invalidation hangs off that event. This also sets
+      // sfCli synchronously, so a run started right after the pick sees the new
+      // org.
+      if (sameOrg(picked.org.username, this.privateOrg)) {
+        // Re-picking the org we're already on is not a switch: refresh the
+        // details (alias/URL may have moved) but don't make the extension bin
+        // its coverage and results for nothing.
+        this.sfCli.setCurrentOrg(picked.org);
+        this.refreshLabel();
+      } else {
+        this.applyOrg(picked.org);
+      }
+      // The ONLY write to the family setting, and only when sync is on. The
+      // resulting watcher event de-dups against the value we just stored.
+      if (this.syncEnabled()) void setSharedOrg(picked.org.username);
       void vscode.window.showInformationMessage(`SF Tests: now targeting ${picked.org.alias}`);
     });
     const closed = new Promise<void>((resolve) => {
@@ -182,7 +248,8 @@ export class OrgPicker implements vscode.Disposable {
   /** Swap the picker's items, keeping the highlight on the org the user had it
    *  on (or the current org for a fresh picker). */
   private renderItems(qp: vscode.QuickPick<OrgQuickPickItem>, orgs: OrgInfo[]): void {
-    const current = getSharedOrg();
+    // Our own org, not the family's — with sync off they can differ.
+    const current = this.privateOrg;
     const active = qp.activeItems[0]?.org.username ?? current;
     qp.items = orgs.map((o) => ({
       label: o.alias,
@@ -230,23 +297,24 @@ export class OrgPicker implements vscode.Disposable {
   }
 
   /**
-   * Resolve the effective startup org: shared setting (migrated from the legacy
-   * key on first run) → CLI default → first org. Sets it on sfCli and fires
-   * onOrgChanged so decorations/state start consistent.
+   * Resolve the startup org: our own remembered org (see `resolveStartupOrg` for
+   * the two ways the family setting can feed into it) → CLI default → first org.
+   * Sets it on sfCli and fires onOrgChanged so decorations/state start
+   * consistent.
    *
    * Cache-first: a remembered org that the persisted list already knows is
    * applied synchronously and revalidated in the background, so activation never
    * waits on `sf org list` and a failed list can't discard a perfectly good org.
    * Only an unrecognised username (or none) has to await a live list.
    */
-  async autoSelectDefault(legacyUsername?: string): Promise<void> {
+  async autoSelectDefault(): Promise<void> {
     try {
-      const effective = await migrateToSharedOrg(legacyUsername);
+      const effective = await this.resolveStartupOrg();
       const cached = effective
         ? this.knownOrgs.find((o) => sameOrg(o.username, effective))
         : undefined;
       if (cached) {
-        this.applyStartupOrg(cached);
+        this.applyOrg(cached);
         void this.reconcileStartupOrg(cached.username);
         return;
       }
@@ -260,7 +328,7 @@ export class OrgPicker implements vscode.Disposable {
         // (the list may be broken, not the org); with nothing named there is no
         // target at all, so say why instead of starting silently org-less.
         if (effective) {
-          this.applyStartupOrg({
+          this.applyOrg({
             alias: effective,
             username: effective,
             instanceUrl: '',
@@ -277,34 +345,56 @@ export class OrgPicker implements vscode.Disposable {
 
       let startup: OrgInfo | undefined;
       if (effective) {
-        // The shared setting names an org. Prefer its full OrgInfo, but if the
-        // list doesn't include it (that one org's auth expired, or a list
-        // hiccup) keep targeting the requested username via a minimal OrgInfo
-        // rather than silently retargeting to a different org — every sibling
-        // plugin still shows it, and a run fails honestly if the auth is really
-        // gone. Mirrors the shared-setting watcher's fallback in applyUsername.
+        // We have a remembered org. Prefer its full OrgInfo, but if the list
+        // doesn't include it (that one org's auth expired, or a list hiccup)
+        // keep targeting the requested username via a minimal OrgInfo rather
+        // than silently retargeting to a different org — a run then fails
+        // honestly if the auth is really gone. Mirrors the family watcher's
+        // fallback in applyUsername.
         startup =
           orgs.find((o) => sameOrg(o.username, effective)) ??
           { alias: effective, username: effective, instanceUrl: '', isDefault: false };
       } else {
-        // Genuinely-empty shared setting: seed from the CLI default (or first).
+        // Nothing remembered yet: start on the CLI default (or first org). This
+        // is OUR org only — a startup fallback never writes the family setting.
         startup = orgs.find((o) => o.isDefault) ?? orgs[0];
       }
 
-      if (startup) {
-        // If nothing was persisted yet, adopt the startup pick into the shared
-        // setting so the rest of the family sees it.
-        if (!getSharedOrg()) await setSharedOrg(startup.username);
-        this.applyStartupOrg(startup);
-      }
+      if (startup) this.applyOrg(startup);
     } catch {
       // silent on startup
     }
   }
 
-  /** Apply a startup org everywhere: sfCli (so a run started immediately sees
-   *  it), the status bar, and listeners. */
-  private applyStartupOrg(org: OrgInfo): void {
+  /**
+   * Settle which org this plugin starts on, before any list work.
+   *
+   * (a) One-time migration off the always-shared releases: the first activation
+   *     that finds the flag unset adopts the family org into our private key, so
+   *     an upgrade doesn't silently jump back to a long-frozen private value.
+   *     Runs regardless of the sync flag; the flag is then set for good, so a
+   *     family org set later is never adopted behind a user who keeps sync off.
+   * (b) With sync on, a family org that has moved on since our last run wins.
+   */
+  private async resolveStartupOrg(): Promise<string | undefined> {
+    const shared = getSharedOrg();
+    if (!this.globalState?.get<boolean>(ORG_SYNC_MIGRATED_KEY)) {
+      if (shared) this.persistPrivateOrg(shared);
+      await this.globalState?.update(ORG_SYNC_MIGRATED_KEY, true);
+    }
+    if (this.syncEnabled() && shared && !sameOrg(shared, this.privateOrg)) {
+      this.persistPrivateOrg(shared);
+    }
+    return this.privateOrg;
+  }
+
+  /** Apply an org everywhere: our private store (the source of truth), sfCli (so
+   *  a run started immediately sees it), the status bar, and listeners. */
+  private applyOrg(org: OrgInfo): void {
+    // Claim a generation so an applyUsername resolution still in flight can't
+    // land on top of this newer, already-resolved org.
+    this.applyGen.next();
+    this.persistPrivateOrg(org.username);
     this.sfCli.setCurrentOrg(org);
     this.refreshLabel();
     this.emitter.fire(org);
@@ -332,13 +422,17 @@ export class OrgPicker implements vscode.Disposable {
     this.refreshLabel();
   }
 
-  /** React to a shared-setting change: resolve the username to a known org
-   *  (refresh the list if we can't), update sfCli + status bar, fire the event. */
+  /** Adopt a family org (sync on only): record it as ours, resolve the username
+   *  to a known org (refresh the list if we can't), update sfCli + status bar,
+   *  fire the event. */
   private applyUsername(username: string | undefined): void {
     // Claim a generation synchronously at handler entry. A newer switch that
     // arrives while our list refresh is in flight bumps this, so the stale
     // resolution below yields to the newer event — the latest event wins.
     const gen = this.applyGen.next();
+    // The private store is the source of truth, so it moves as soon as we commit
+    // to the switch — the slow OrgInfo resolution below only fills in the label.
+    this.persistPrivateOrg(username);
     if (!username) {
       this.sfCli.setCurrentOrg(undefined);
       this.refreshLabel();
@@ -403,6 +497,7 @@ export class OrgPicker implements vscode.Disposable {
     this.activePick?.dispose();
     this.statusBar.dispose();
     this.watcher.dispose();
+    this.syncWatcher.dispose();
     this.emitter.dispose();
   }
 }
