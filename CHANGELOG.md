@@ -11,6 +11,7 @@ All notable changes to the "sf-test-runner" extension are documented here.
 - `SF Tests: Run All Local Tests` now always gathers coverage — a whole-org suite run is the case where the number is the point. The Testing view's root **Run All Tests** button maps to the same thing (`--test-level RunLocalTests`) rather than naming every discovered class on the command line.
 - A run that the CLI refuses outright — a class that is not in the org, expired auth — now reports the CLI's own reason ("This class name's value is invalid: …") instead of the bare "produced no output (exit 1)" it used to show. Failing tests are unaffected: they exit 100 but carry a complete result, and that still counts as a run that happened.
 - **Requires VS Code 1.88** (was 1.85), the release where the test coverage API was finalized.
+- Switching org no longer clears the results on screen. Each run is labelled with the org it ran against and kept in VS Code's run history, so the previous org's marks stay visible until you run again.
 
 ### Removed
 Every command and setting below was replaced by a built-in that does the same job; the old ones are gone from the palette.

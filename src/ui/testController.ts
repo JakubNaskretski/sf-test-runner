@@ -94,8 +94,8 @@ export function createApexTestController(deps: ApexTestControllerDeps): ApexTest
     await ensureDiscovered();
   };
   controller.refreshHandler = async () => {
-    discovery = discoverAll();
-    await discovery;
+    discovery = undefined;
+    await ensureDiscovered();
   };
 
   const watcher = vscode.workspace.createFileSystemWatcher('**/*.cls');
@@ -112,7 +112,13 @@ export function createApexTestController(deps: ApexTestControllerDeps): ApexTest
   for (const editor of vscode.window.visibleTextEditors) parseDocument(editor.document);
 
   function ensureDiscovered(): Promise<void> {
-    return (discovery ??= discoverAll());
+    return (discovery ??= discoverAll().catch((err) => {
+      // Memoising a REJECTED scan would leave the Test Explorer permanently
+      // empty after one transient failure; forget it so the next ask retries.
+      discovery = undefined;
+      const message = err instanceof Error ? err.message : String(err);
+      deps.output.appendLine(`Test discovery failed: ${message}`);
+    }));
   }
 
   async function discoverAll(): Promise<void> {
@@ -173,7 +179,17 @@ export function createApexTestController(deps: ApexTestControllerDeps): ApexTest
     }
 
     const previousId = classIdByUri.get(uri.toString());
-    if (previousId && previousId !== cls.className) controller.items.delete(previousId);
+    // Same ownership rule as forgetFile: only drop the old item if THIS file is
+    // the one that put it there, or renaming one of two files that declare the
+    // same class name would delete the other's item.
+    if (
+      previousId &&
+      previousId !== cls.className &&
+      ownerByClassId.get(previousId) === uri.toString()
+    ) {
+      controller.items.delete(previousId);
+      ownerByClassId.delete(previousId);
+    }
 
     // Adding an item with an existing id replaces it, so a re-parse after an edit
     // simply refreshes the methods.
@@ -281,12 +297,17 @@ export function createApexTestController(deps: ApexTestControllerDeps): ApexTest
     const orgUsername = await deps.acquireRun();
     if (!orgUsername) return;
 
-    deps.revealOutput();
-    const run = controller.createTestRun(request, orgUsername, true);
-    for (const item of items) run.enqueued(item);
-    deps.output.appendLine(`▶ Running ${items.length || 'all local'} Apex tests on ${orgUsername}…`);
-
+    // Everything after the acquire lives in the try: a throw between claiming the
+    // guard and entering it would hold the single-run lock until a window reload.
+    let run: vscode.TestRun | undefined;
     try {
+      deps.revealOutput();
+      run = controller.createTestRun(request, orgUsername, true);
+      for (const item of items) run.enqueued(item);
+      const count = items.filter((i) => i.children.size === 0).length;
+      deps.output.appendLine(
+        `▶ Running ${count || 'all local'} Apex tests on ${orgUsername}…`,
+      );
       // run.token is what the Test Explorer's cancel button raises — wiring it
       // here means every entry point is cancellable, not just the run profiles.
       const { summary, coverage } = await invoke(orgUsername, run.token);
@@ -303,11 +324,11 @@ export function createApexTestController(deps: ApexTestControllerDeps): ApexTest
         const message = err instanceof Error ? err.message : String(err);
         deps.output.appendLine(`✗ Error: ${message}`);
         // appendOutput renders in a terminal: bare LF stair-steps the next line.
-        run.appendOutput(`Run failed: ${message.replace(/\r?\n/g, '\r\n')}\r\n`);
+        run?.appendOutput(`Run failed: ${message.replace(/\r?\n/g, '\r\n')}\r\n`);
         void vscode.window.showErrorMessage(`SF Tests: ${message}`);
       }
     } finally {
-      run.end();
+      run?.end();
       deps.releaseRun();
     }
   }
@@ -386,6 +407,16 @@ export function createApexTestController(deps: ApexTestControllerDeps): ApexTest
       }
     }
 
+    if (summary.results.length === 0) {
+      // The CLI can return a result carrying only a testRunId — the org is still
+      // running the job past `--wait`. Marking everything skipped would report
+      // that as a tidy finished run; say what actually happened instead.
+      run.appendOutput(
+        'This run reported no test results. If it was just started, the org may still be ' +
+          'running it — "SF Tests: Load Recent Test Runs" picks it up once it finishes.\r\n',
+      );
+      return;
+    }
     // Leaves we enqueued that the run never mentioned: not failures, not passes.
     for (const item of items) {
       if (item.children.size === 0 && !reported.has(item.id)) run.skipped(item);
@@ -475,6 +506,10 @@ export function createApexTestController(deps: ApexTestControllerDeps): ApexTest
 
   /** Resolve an Apex class/trigger name to its source file in the workspace. */
   async function findApexFile(name: string, isTrigger: boolean): Promise<vscode.Uri | undefined> {
+    // Class names reach this from CLI output as well as from our own scan, and
+    // they are spliced into a search glob. Apex identifiers are word characters
+    // only, so anything else is not a name we could match anyway.
+    if (!/^\w+$/.test(name)) return undefined;
     const key = `${isTrigger ? 'trigger' : 'cls'}:${name.toLowerCase()}`;
     const cached = fileCache.get(key);
     if (cached) return cached;

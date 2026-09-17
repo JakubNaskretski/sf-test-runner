@@ -66,6 +66,7 @@ Because we never embed your access token directly, your `sf` CLI auth is the sin
 - `Load Coverage from Org` and `Load Recent Test Runs` are the two paths that can show you numbers you did not produce. Both need you to ask, and both name their source in the run they create.
 - Classes only (triggers are not discovered as tests, and trigger coverage is not surfaced).
 - Only runs started by this extension appear by themselves; use `Load Recent Test Runs` for anything else.
+- Switching the target org does not wipe the results already in the Testing view: each run stays labelled with the org it ran against, so an old run's pass/fail marks remain visible until you run again.
 
 ## License
 
