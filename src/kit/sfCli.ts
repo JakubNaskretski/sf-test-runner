@@ -67,6 +67,18 @@ export class SfCliCancelledError extends SfCliError {
   }
 }
 
+/** The first line of stderr that reads like the CLI's own error, with its
+ *  `Error (CODE):` prefix and colour codes stripped. Update notices and other
+ *  chevron-prefixed chatter are skipped — they are not what failed. */
+export function firstErrorLine(stderr: string | undefined): string | null {
+  for (const raw of stripAnsi(stderr ?? '').split(/\r?\n/)) {
+    const line = raw.trim();
+    if (!line || line.startsWith('\u203a') || /^warning:/i.test(line)) continue;
+    return line.replace(/^Error\s*(?:\(([^)]+)\))?:\s*/i, (_m, code) => (code ? `${code}: ` : ''));
+  }
+  return null;
+}
+
 /** Distinct reasons a run terminated without a clean exit, so JSON parsing can
  *  refuse to touch partial output (timeout/maxBuffer) but still parse a normal
  *  non-zero exit (which carries a valid sf error envelope on stdout). */
@@ -339,7 +351,18 @@ export class SfCliService {
     const promise = inner.promise.then(({ stdout, stderr, code }) => {
       const trimmed = stdout.trim();
       if (!trimmed) {
-        throw new SfCliError(`sf ${args.join(' ')} produced no output (exit ${code})`, stderr);
+        // Not every failure carries a JSON envelope: `sf apex run test` without
+        // `--json` writes nothing to stdout and puts the real reason ("This class
+        // name's value is invalid: ...") on stderr. Verified against a live org —
+        // so lead with that line instead of a bare "produced no output", which
+        // tells the user nothing about what went wrong.
+        const reason = firstErrorLine(stderr);
+        throw new SfCliError(
+          reason
+            ? `${reason} (sf exited ${code} with no output)`
+            : `sf ${args.join(' ')} produced no output (exit ${code})`,
+          stderr
+        );
       }
       try {
         return JSON.parse(trimmed) as T;

@@ -1,8 +1,8 @@
 /**
- * Lightweight scan of Apex source for test entry points, so the CodeLens
- * provider can offer "Run" on the class AND on each `@IsTest` (or `testMethod`)
- * method. This is a regex heuristic, not a parser — good enough
- * to place lenses; the CLI is the source of truth for what actually runs.
+ * Lightweight scan of Apex source for test entry points, so the test controller
+ * can offer a run on the class AND on each `@IsTest` (or `testMethod`) method.
+ * This is a regex heuristic, not a parser — good enough to place test items; the
+ * CLI is the source of truth for what actually runs.
  */
 
 export interface TestClassInfo {
