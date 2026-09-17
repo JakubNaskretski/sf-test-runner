@@ -1,0 +1,16 @@
+{
+  // The webview bundles run in a browser, not in Node: they need the DOM lib and
+  // must NOT see @types/node or @types/vscode. Keeping them in their own project
+  // is what lets the extension-host program stay DOM-free (mixing @types/node
+  // with the DOM lib is where the global-type clashes start).
+  "extends": "../../tsconfig.json",
+  "compilerOptions": {
+    "lib": ["ES2020", "DOM"],
+    "types": [],
+    "noEmit": true
+  },
+  "include": ["./**/*.ts"],
+  // The root config excludes this folder (it is not part of the host program);
+  // that exclude must not follow us in here.
+  "exclude": []
+}

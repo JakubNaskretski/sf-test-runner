@@ -2,6 +2,31 @@
 
 All notable changes to the "sf-test-runner" extension are documented here.
 
+## [0.9.0] - 2026-09-17
+
+### Changed
+- **Apex tests are back in the SF Tests sidebar, as four views.** The Testing-view integration from 0.8.0 is gone; in its place the activity-bar container holds **Tests** (pick what to run), **Results** (read what happened), **Coverage** (the numbers and the paint toggle) and the **Command log**. Each is a collapsible section you can fold, resize, or hide from the container's ⋯ menu — selecting and reading are deliberately separate views, so you can give the Results view the room while a run is on.
+- **Tests view.** The target org sits at the top as a dropdown with a DEV/SBX/PROD/SCR badge, a ⟳ to refresh the list and ＋ to log in to another org. Below it: All/Selected tabs, a search box, a source filter, and a tree of test classes with tri-state checkboxes down to the method. **Tests for active file** ticks the tests for the class open in the editor (the class itself if it is a test, otherwise its `<Name>Test`, `Test<Name>`, `<Name>_Test` or `<Name>Tests`). The buttons are **Run Selected**, **Run All Local**, and a ⋯ menu with **Run all tests in org (incl. managed)** and **Load recent run**; the "with coverage" chip decides whether the run asks for `--code-coverage`.
+- **Tests from the org, not only from disk.** **Fetch org tests** lists the test classes the org has and merges them with the workspace scan: classes in both places are plain rows, classes only in the org are listed as `org-only` and runnable, classes only on disk carry a `not deployed` badge and a warning before a run (you can run anyway). The org's list is cached per org and stamped "as of"; `sfTestRunner.fetchOrgTestsOnOpen` (default off) refreshes it whenever the panel lands on an org.
+- **Runs are asynchronous, with live progress.** The run is started without waiting and polled every few seconds: the Tests view shows done/total and the elapsed time, and the Results view fills its tree as methods finish. **Cancel** now aborts the run in the org — queued classes are marked Aborted, the class already executing finishes — instead of only stopping the local command.
+- **Results view.** One run bar (PASS/FAIL, counts, wall time, org, finish time, **Re-run failed**, **Copy**), an All/Failed filter, and a tree of test classes showing `n/m passed` and time, with each method's outcome and duration underneath. Failures expand in place with the assertion message and every parsed stack frame as a link that opens the file at that line; compile failures get their own badge. Runs loaded with **Load Recent Test Runs** land in the same view.
+- **Coverage view and painted lines.** After a coverage run the view shows the overall percentage with the 75% production-deploy floor marked, and a worst-first table of the classes the run exercised (bar coloured by band, covered/total, uncovered count). A row opens the class; its cloud button loads that one class's stored coverage from the org's last run, whoever ran it, labelled as such. Covered and uncovered lines are painted in the editor with a gutter bar and overview-ruler marks, the run and org named in the hover, and a status-bar eye shows the active file's percentage and toggles the painting. Coverage only ever comes from your own run or that explicit per-class load, is dimmed once you edit the file, and is dropped when you switch orgs.
+- **CodeLens** on test classes and methods: `▶ Run` and `Run with Coverage`, plus the last outcome.
+- `sfTestRunner.testTimeoutMs` is now the ceiling for polling a run rather than a `--wait` value. A run still going when it passes is reported as still running in the org; **Load Recent Test Runs** picks it up once it finishes.
+- A run the CLI refuses (a class not in the org, expired auth, "No tests found") is reported as an error run in the Results view and the output channel — never as a green run.
+
+### Added
+- Settings `sfTestRunner.runWithCoverage` (default on), `sfTestRunner.paintCoverage` (default on) and `sfTestRunner.fetchOrgTestsOnOpen` (default off).
+- Commands: Run Selected Tests, Run All Tests in Org (incl. managed), Cancel Test Run, Rescan Workspace for Tests, Fetch Test Classes from Org, Log In to an Org, Select Tests for Active File, Re-run Failed Tests, Copy Run Summary, Expand All Results, Collapse All Results, Toggle Coverage Painting, Clear Coverage.
+
+### Removed
+- The Testing-view integration: the Run / Run with Coverage profiles, the Test Coverage view entries and the gutter run icons. Use the sidebar views and the CodeLens links instead; keybindings pointed at the `testing.*` built-ins no longer reach this extension's tests.
+
+### Upgrading
+- Click the SF Tests activity-bar icon: the four views are there. If the Tests view is empty, press **Rescan** — discovery is lazy on purpose.
+- Runs ask for coverage by default now (`sfTestRunner.runWithCoverage`); turn the chip off for a quicker run.
+- Your target org and your selection of tests survive a window reload; the command log starts collapsed.
+
 ## [0.8.0] - 2026-09-17
 
 ### Changed

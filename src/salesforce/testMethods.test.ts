@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { hasApexTests, findClassDecl, findTestMethods } from './testMethods';
+import { hasApexTests, findClassDecl, findTestMethods, stripComments } from './testMethods';
 
 const CLASS = `@isTest
 public class MyTestClass {
@@ -91,4 +91,61 @@ test('findTestMethods returns method line numbers', () => {
   // testAlpha is declared on line index 3 (0-based).
   const alpha = methods.find((m) => m.methodName === 'testAlpha');
   assert.equal(alpha!.line, 3);
+});
+
+test('a "class X" mention in a header comment does not win over the declaration', () => {
+  const src = `/**
+ * Helper for the Acme billing flow. Pairs with class AcmeBillingHelper and is
+ * exercised by class AcmeGhost, which does not exist.
+ */
+@IsTest
+private class AcmeBillingServiceTest {
+    // class AcmeCommentOnly
+    @IsTest
+    static void testInvoiceTotals() {
+        System.assertEquals(1, 1);
+    }
+}`;
+  const lines = src.split('\n');
+  const decl = findClassDecl(lines);
+  assert.equal(decl!.className, 'AcmeBillingServiceTest');
+  // Line 5 (0-based) is the real declaration; the comment mentions sit above it.
+  assert.equal(decl!.classLine, 5);
+  assert.equal(lines[decl!.classLine].includes('class AcmeBillingServiceTest'), true);
+});
+
+test('a commented-out class declaration is ignored', () => {
+  const src = `// public class OldAcmeTest {
+@IsTest
+private class AcmeOrderTest {
+    @IsTest
+    static void testOrder() {}
+}`;
+  const decl = findClassDecl(src.split('\n'));
+  assert.equal(decl!.className, 'AcmeOrderTest');
+});
+
+test('stripComments keeps line structure and leaves string literals alone', () => {
+  const src = `String endpoint = 'https://acme.example.com//path';
+// class Ghost
+Integer x = 1; /* class Ghost2 */ Integer y = 2;`;
+  const stripped = stripComments(src);
+  assert.equal(stripped.split('\n').length, src.split('\n').length);
+  assert.equal(stripped.split('\n')[0], src.split('\n')[0]);
+  assert.equal(/class\s+Ghost/.test(stripped), false);
+  assert.match(stripped.split('\n')[2], /Integer x = 1;\s+Integer y = 2;/);
+});
+
+test('stripComments preserves method line numbers for findTestMethods', () => {
+  const src = `/* Acme
+   multi-line
+   header */
+@IsTest
+private class AcmeRefundTest {
+    @IsTest
+    static void testRefund() {}
+}`;
+  const lines = stripComments(src).split('\n');
+  const methods = findTestMethods(lines, 'AcmeRefundTest');
+  assert.deepEqual(methods.map((m) => [m.methodName, m.line]), [['testRefund', 6]]);
 });

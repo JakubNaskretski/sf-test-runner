@@ -4,6 +4,7 @@ src/**
 node_modules/**
 .gitignore
 .vscodeignore
+**/*.local.md
 esbuild.js
 tsconfig.json
 **/*.map
@@ -14,3 +15,4 @@ tsconfig.json
 *.vsix
 out-test/**
 tsconfig.test.json
+samples/**

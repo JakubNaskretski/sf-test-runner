@@ -59,6 +59,11 @@ export class OrgPicker implements vscode.Disposable {
   private readonly statusBar: vscode.StatusBarItem;
   private readonly emitter = new vscode.EventEmitter<OrgInfo | undefined>();
   readonly onOrgChanged = this.emitter.event;
+  /** Fires whenever the cached org LIST moves (a refresh, a picker revalidate),
+   *  which happens without the selected org changing. The panel's `<select>`
+   *  must offer exactly what the QuickPick offers, so it follows this. */
+  private readonly orgsEmitter = new vscode.EventEmitter<OrgInfo[]>();
+  readonly onOrgsChanged = this.orgsEmitter.event;
   private readonly watcher: vscode.Disposable;
   private readonly syncWatcher: vscode.Disposable;
 
@@ -154,6 +159,53 @@ export class OrgPicker implements vscode.Disposable {
   private setKnownOrgs(orgs: OrgInfo[]): void {
     this.knownOrgs = orgs;
     this.globalState?.update(ORG_LIST_CACHE_KEY, orgs).then(undefined, () => {});
+    this.orgsEmitter.fire(orgs);
+  }
+
+  /** The org list as the picker currently knows it — seeded from globalState in
+   *  the constructor, so it is populated before any `sf org list` runs. */
+  knownOrgList(): OrgInfo[] {
+    return [...this.knownOrgs];
+  }
+
+  /**
+   * Apply an org the user chose by hand. Both hand-picking surfaces — the
+   * QuickPick and the panel's `<select>` — come through here, so the private
+   * store write and the family publish happen exactly once, in one place.
+   */
+  private applyPick(org: OrgInfo): void {
+    if (sameOrg(org.username, this.privateOrg)) {
+      // Re-picking the org we're already on is not a switch: refresh the
+      // details (alias/URL may have moved) but don't make the extension bin
+      // its coverage and results for nothing.
+      this.sfCli.setCurrentOrg(org);
+      this.refreshLabel();
+    } else {
+      // Apply directly: with sync off nothing else fires onOrgChanged, and the
+      // extension's org-switch invalidation hangs off that event. This also sets
+      // sfCli synchronously, so a run started right after the pick sees the new
+      // org.
+      this.applyOrg(org);
+    }
+    // The ONLY write to the family setting, and only when sync is on. The
+    // resulting watcher event de-dups against the value we just stored.
+    if (this.syncEnabled()) void setSharedOrg(org.username);
+    void vscode.window.showInformationMessage(`SF Tests: now targeting ${org.alias}`);
+  }
+
+  /**
+   * Pick by username — the panel's org `<select>`. The username must be one we
+   * already listed (the view provider rejects anything else); a name the cache
+   * has lost means the list is stale, so refresh it rather than target a
+   * username we cannot describe.
+   */
+  selectByUsername(username: string): void {
+    const org = this.knownOrgs.find((o) => sameOrg(o.username, username));
+    if (!org) {
+      void this.refreshOrgs();
+      return;
+    }
+    this.applyPick(org);
   }
 
   /**
@@ -176,23 +228,7 @@ export class OrgPicker implements vscode.Disposable {
       const picked = qp.selectedItems[0];
       qp.hide();
       if (!picked) return;
-      // Apply directly: with sync off nothing else fires onOrgChanged, and the
-      // extension's org-switch invalidation hangs off that event. This also sets
-      // sfCli synchronously, so a run started right after the pick sees the new
-      // org.
-      if (sameOrg(picked.org.username, this.privateOrg)) {
-        // Re-picking the org we're already on is not a switch: refresh the
-        // details (alias/URL may have moved) but don't make the extension bin
-        // its coverage and results for nothing.
-        this.sfCli.setCurrentOrg(picked.org);
-        this.refreshLabel();
-      } else {
-        this.applyOrg(picked.org);
-      }
-      // The ONLY write to the family setting, and only when sync is on. The
-      // resulting watcher event de-dups against the value we just stored.
-      if (this.syncEnabled()) void setSharedOrg(picked.org.username);
-      void vscode.window.showInformationMessage(`SF Tests: now targeting ${picked.org.alias}`);
+      this.applyPick(picked.org);
     });
     const closed = new Promise<void>((resolve) => {
       qp.onDidHide(() => {
@@ -499,5 +535,6 @@ export class OrgPicker implements vscode.Disposable {
     this.watcher.dispose();
     this.syncWatcher.dispose();
     this.emitter.dispose();
+    this.orgsEmitter.dispose();
   }
 }

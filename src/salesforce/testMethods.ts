@@ -45,10 +45,78 @@ export function hasApexTests(text: string): boolean {
   return IS_TEST_ANNOTATION_RE.test(text) || TEST_METHOD_KEYWORD_RE.test(text);
 }
 
-/** Find the outer class declaration (name + line). Returns null if none. */
+/**
+ * Blank out `//` line comments and `/* … *\/` block comments while preserving the
+ * line structure: every stripped character becomes a space and every newline is
+ * kept, so an index into the result is still an index into the original source.
+ *
+ * Apex string literals are single-quoted, and a literal is the one place a `//`
+ * or `/*` is not a comment (`'http://example.com'`), so the state machine tracks
+ * them. An unterminated literal is bounded to its own line — valid Apex has no
+ * multi-line string, and bounding it stops one stray quote from swallowing the
+ * rest of the file.
+ */
+export function stripComments(text: string): string {
+  const out: string[] = [];
+  let mode: 'code' | 'line' | 'block' | 'string' = 'code';
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i];
+    const next = text[i + 1];
+    const isNewline = c === '\n' || c === '\r';
+    if (mode === 'code') {
+      if (c === '/' && next === '/') {
+        mode = 'line';
+        out.push('  ');
+        i++;
+      } else if (c === '/' && next === '*') {
+        mode = 'block';
+        out.push('  ');
+        i++;
+      } else {
+        if (c === "'") mode = 'string';
+        out.push(c);
+      }
+    } else if (mode === 'line') {
+      if (isNewline) {
+        mode = 'code';
+        out.push(c);
+      } else {
+        out.push(' ');
+      }
+    } else if (mode === 'block') {
+      if (c === '*' && next === '/') {
+        mode = 'code';
+        out.push('  ');
+        i++;
+      } else {
+        out.push(isNewline ? c : ' ');
+      }
+    } else {
+      // Inside a string literal: keep it verbatim, honour `\'` escapes.
+      out.push(c);
+      if (c === '\\' && next !== undefined && next !== '\n' && next !== '\r') {
+        out.push(next);
+        i++;
+      } else if (c === "'" || isNewline) {
+        mode = 'code';
+      }
+    }
+  }
+  return out.join('');
+}
+
+/**
+ * Find the outer class declaration (name + line). Returns null if none.
+ *
+ * Comments are blanked out first: a file whose header comment says "…this class
+ * Foo does…" used to match before the real declaration below it, naming the
+ * class after a word in prose. The strip preserves line structure, so the
+ * returned `classLine` still indexes the `lines` the caller passed in.
+ */
 export function findClassDecl(lines: string[]): TestClassInfo | null {
-  for (let i = 0; i < lines.length; i++) {
-    const m = lines[i].match(CLASS_DECL_RE);
+  const scrubbed = stripComments(lines.join('\n')).split('\n');
+  for (let i = 0; i < scrubbed.length; i++) {
+    const m = scrubbed[i].match(CLASS_DECL_RE);
     if (m) return { className: m[1], classLine: i };
   }
   return null;

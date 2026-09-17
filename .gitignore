@@ -2,8 +2,10 @@ node_modules/
 dist/
 out/
 out-test/
+samples/
 .vscode-test/
 *.vsix
 .DS_Store
 *.log
 .env
+*.local.md
