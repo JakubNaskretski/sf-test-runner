@@ -109,3 +109,56 @@ test('listRecentTestRuns throws the CLI envelope error instead of returning []',
     },
   );
 });
+
+// The riskiest line in the 0.8.0 migration: `runTests` throws when the envelope
+// carries no `result`. Failing tests must NOT trip it — `sf apex run test` sets
+// exit 100 and still emits a complete result, verified live against an org and in
+// the plugin-apex reporter source.
+test('a run whose tests failed is a result, not an error, despite status 100', async () => {
+  const { summary } = await withEnvelope({
+    status: 100,
+    result: {
+      summary: { outcome: 'Failed', testsRan: 2, passing: 1, failing: 1, testTotalTime: '38 ms' },
+      tests: [
+        { ApexClass: { Name: 'SfProbeTest' }, MethodName: 'testPass', Outcome: 'Pass', RunTime: 4 },
+        {
+          ApexClass: { Name: 'SfProbeTest' },
+          MethodName: 'testFail',
+          Outcome: 'Fail',
+          RunTime: 34,
+          Message: 'Assertion Failed',
+          StackTrace: 'Class.SfProbeTest.testFail: line 10, column 1',
+        },
+      ],
+    },
+  }).runTestSelection(['SfProbeTest'], 'u@example.com');
+
+  assert.equal(summary.testsRan, 2);
+  assert.equal(summary.failing, 1);
+  assert.equal(summary.results[1].outcome, 'Fail');
+});
+
+test('a success envelope without a status field still counts as a run', async () => {
+  // A plain run (no --code-coverage) comes back as `{ result }` with no `status`.
+  const { summary } = await withEnvelope({
+    result: {
+      summary: { outcome: 'Passed', testsRan: 1, passing: 1, failing: 0, testTotalTime: '4 ms' },
+      tests: [{ ApexClass: { Name: 'SfProbeTest' }, MethodName: 'testPass', Outcome: 'Pass' }],
+    },
+  }).runTestSelection(['SfProbeTest.testPass'], 'u@example.com');
+
+  assert.equal(summary.passing, 1);
+});
+
+test('an envelope with no result at all is reported as the CLI failure it is', async () => {
+  await assert.rejects(
+    () =>
+      withEnvelope({
+        status: 1,
+        name: 'INVALID_INPUT',
+        message: "This class name's value is invalid: NoSuchClass.",
+      }).runTestSelection(['NoSuchClass'], 'u@example.com'),
+    (err: unknown) =>
+      err instanceof SfCliError && /INVALID_INPUT.*value is invalid/.test((err as Error).message),
+  );
+});

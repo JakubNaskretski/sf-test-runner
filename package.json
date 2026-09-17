@@ -1,13 +1,13 @@
 {
   "name": "sf-test-runner",
   "displayName": "Salesforce Test Runner",
-  "description": "Run Apex tests with inline coverage in the gutter, browse results in a sidebar tree, and see every sf CLI command we execute in a collapsible panel. Reuses your existing sf CLI auth.",
-  "version": "0.7.0",
+  "description": "Run Apex tests in VS Code's Test Explorer, with coverage attached to the run that produced it. Every sf CLI command we execute is listed in a collapsible panel. Reuses your existing sf CLI auth.",
+  "version": "0.8.0",
   "publisher": "Skrety",
   "icon": "icons/plugin-icon.png",
   "license": "MIT",
   "engines": {
-    "vscode": "^1.85.0"
+    "vscode": "^1.88.0"
   },
   "categories": [
     "Testing",
@@ -24,45 +24,15 @@
   "main": "./dist/extension.js",
   "activationEvents": [
     "onLanguage:apex",
-    "onView:sfTestRunner.results",
     "onView:sfTestRunner.commands",
     "workspaceContains:**/*.cls"
   ],
   "contributes": {
     "commands": [
       {
-        "command": "sfTestRunner.runCurrentClass",
-        "title": "SF Tests: Run Tests in Current Class",
-        "icon": "$(play)"
-      },
-      {
-        "command": "sfTestRunner.runLast",
-        "title": "SF Tests: Re-run Last Class",
-        "icon": "$(run-all)"
-      },
-      {
-        "command": "sfTestRunner.runTestMethod",
-        "title": "SF Tests: Run Test Method"
-      },
-      {
-        "command": "sfTestRunner.rerunFailed",
-        "title": "SF Tests: Re-run Failed Tests",
-        "icon": "$(debug-rerun)"
-      },
-      {
         "command": "sfTestRunner.runAllLocal",
         "title": "SF Tests: Run All Local Tests",
         "icon": "$(run-all)"
-      },
-      {
-        "command": "sfTestRunner.runClassFromTree",
-        "title": "SF Tests: Run Class Tests",
-        "icon": "$(play)"
-      },
-      {
-        "command": "sfTestRunner.rerunMethodFromTree",
-        "title": "SF Tests: Re-run This Method",
-        "icon": "$(play)"
       },
       {
         "command": "sfTestRunner.loadRecentRuns",
@@ -71,18 +41,8 @@
       },
       {
         "command": "sfTestRunner.refreshCoverage",
-        "title": "SF Tests: Refresh Coverage from Org",
-        "icon": "$(refresh)"
-      },
-      {
-        "command": "sfTestRunner.clearCoverage",
-        "title": "SF Tests: Clear Coverage Decorations",
-        "icon": "$(clear-all)"
-      },
-      {
-        "command": "sfTestRunner.toggleInlineCoverage",
-        "title": "SF Tests: Toggle Inline Coverage",
-        "icon": "$(eye)"
+        "title": "SF Tests: Load Coverage from Org",
+        "icon": "$(cloud-download)"
       },
       {
         "command": "sfTestRunner.selectOrg",
@@ -92,10 +52,6 @@
       {
         "command": "sfTestRunner.refreshOrgs",
         "title": "SF Tests: Refresh Org List"
-      },
-      {
-        "command": "sfTestRunner.openTestResult",
-        "title": "SF Tests: Open Test Result"
       },
       {
         "command": "sfTestRunner.clearCommandHistory",
@@ -116,56 +72,11 @@
     "menus": {
       "commandPalette": [
         {
-          "command": "sfTestRunner.runTestMethod",
-          "when": "false"
-        },
-        {
-          "command": "sfTestRunner.openTestResult",
-          "when": "false"
-        },
-        {
-          "command": "sfTestRunner.runClassFromTree",
-          "when": "false"
-        },
-        {
-          "command": "sfTestRunner.rerunMethodFromTree",
-          "when": "false"
-        },
-        {
           "command": "sfTestRunner.copyCommand",
           "when": "false"
         }
       ],
       "view/title": [
-        {
-          "command": "sfTestRunner.runLast",
-          "when": "view == sfTestRunner.results",
-          "group": "navigation@1"
-        },
-        {
-          "command": "sfTestRunner.rerunFailed",
-          "when": "view == sfTestRunner.results",
-          "group": "navigation@2"
-        },
-        {
-          "command": "sfTestRunner.loadRecentRuns",
-          "when": "view == sfTestRunner.results",
-          "group": "navigation@3"
-        },
-        {
-          "command": "sfTestRunner.refreshCoverage",
-          "when": "view == sfTestRunner.results",
-          "group": "navigation@4"
-        },
-        {
-          "command": "sfTestRunner.selectOrg",
-          "when": "view == sfTestRunner.results",
-          "group": "navigation@5"
-        },
-        {
-          "command": "sfTestRunner.runAllLocal",
-          "when": "view == sfTestRunner.results"
-        },
         {
           "command": "sfTestRunner.clearCommandHistory",
           "when": "view == sfTestRunner.commands",
@@ -175,30 +86,29 @@
           "command": "sfTestRunner.showOutput",
           "when": "view == sfTestRunner.commands",
           "group": "navigation@2"
+        },
+        {
+          "command": "sfTestRunner.selectOrg",
+          "when": "view == sfTestRunner.commands"
+        },
+        {
+          "command": "sfTestRunner.runAllLocal",
+          "when": "view == sfTestRunner.commands"
+        },
+        {
+          "command": "sfTestRunner.loadRecentRuns",
+          "when": "view == sfTestRunner.commands"
+        },
+        {
+          "command": "sfTestRunner.refreshCoverage",
+          "when": "view == sfTestRunner.commands"
         }
       ],
       "view/item/context": [
         {
-          "command": "sfTestRunner.runClassFromTree",
-          "when": "view == sfTestRunner.results && viewItem == class",
-          "group": "inline"
-        },
-        {
-          "command": "sfTestRunner.rerunMethodFromTree",
-          "when": "view == sfTestRunner.results && viewItem == method",
-          "group": "inline"
-        },
-        {
           "command": "sfTestRunner.copyCommand",
           "when": "view == sfTestRunner.commands && viewItem == sfCommand",
           "group": "inline"
-        }
-      ],
-      "editor/title": [
-        {
-          "command": "sfTestRunner.runCurrentClass",
-          "when": "resourceExtname == .cls && sfTestRunner.activeFileHasTests",
-          "group": "navigation"
         }
       ]
     },
@@ -213,12 +123,6 @@
     },
     "views": {
       "sfTestRunner": [
-        {
-          "id": "sfTestRunner.results",
-          "name": "Test Results",
-          "icon": "$(beaker)",
-          "contextualTitle": "Salesforce Test Runner"
-        },
         {
           "id": "sfTestRunner.commands",
           "name": "Recent sf Commands",
@@ -235,16 +139,6 @@
           "default": 600000,
           "minimum": 60000,
           "description": "Hard timeout (ms) for `sf apex run test`. Also drives the --wait minutes flag."
-        },
-        "sfTestRunner.showCoverageOnOpen": {
-          "type": "boolean",
-          "default": true,
-          "description": "When an Apex class is opened, auto-load its most recent coverage from the org."
-        },
-        "sfTestRunner.showInlineCoverage": {
-          "type": "boolean",
-          "default": true,
-          "description": "Paint covered/uncovered lines in the gutter and editor. When off, coverage is still reported as numbers (run summary, output channel, Refresh Coverage) but nothing is highlighted."
         },
         "sfTestRunner.autoShowOutput": {
           "type": "boolean",
@@ -273,7 +167,7 @@
   },
   "devDependencies": {
     "@types/node": "^20.11.0",
-    "@types/vscode": "^1.85.0",
+    "@types/vscode": "1.88.0",
     "@typescript-eslint/eslint-plugin": "^7.0.0",
     "@typescript-eslint/parser": "^7.0.0",
     "esbuild": "^0.20.0",

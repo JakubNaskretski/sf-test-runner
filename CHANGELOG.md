@@ -2,6 +2,32 @@
 
 All notable changes to the "sf-test-runner" extension are documented here.
 
+## [0.8.0] - 2026-09-17
+
+### Changed
+- **Apex tests now run through VS Code's native testing UI.** The extension registers a `TestController`, so your test classes and methods appear in the Testing view with run icons in the gutter, and running, re-running, re-running just the failures and running the current file are VS Code's own commands, working the way they do for every other test framework. Failures are attached to the failing line through the built-in test failure UI instead of the Problems panel.
+- **Coverage belongs to a run.** A second run profile, **Run with Coverage**, asks the org for `--code-coverage` and attaches the result to that specific run (`TestRun.addCoverage`), which VS Code shows in its Test Coverage view and, on request, line by line in the editor. This is the structural version of the fix the previous release aimed at: coverage from somebody else's run can no longer appear, because coverage no longer exists as ambient state — only as a property of a run you started and that is labelled with the org it ran against. A plain run skips `--code-coverage` entirely, so it asks the org for less work than before.
+- **Coverage you did not produce is now explicitly labelled.** `SF Tests: Refresh Coverage from Org` is renamed `SF Tests: Load Coverage from Org` and publishes the org's stored `ApexCodeCoverageAggregate` as a coverage-only run named "<class> coverage from org (last run, any user)". `Load Recent Test Runs` likewise publishes what it loaded as a named run.
+- `SF Tests: Run All Local Tests` now always gathers coverage — a whole-org suite run is the case where the number is the point. The Testing view's root **Run All Tests** button maps to the same thing (`--test-level RunLocalTests`) rather than naming every discovered class on the command line.
+- A run that the CLI refuses outright — a class that is not in the org, expired auth — now reports the CLI's own reason ("This class name's value is invalid: …") instead of the bare "produced no output (exit 1)" it used to show. Failing tests are unaffected: they exit 100 but carry a complete result, and that still counts as a run that happened.
+- **Requires VS Code 1.88** (was 1.85), the release where the test coverage API was finalized.
+- Switching org no longer clears the results on screen. Each run is labelled with the org it ran against and kept in VS Code's run history, so the previous org's marks stay visible until you run again.
+
+### Removed
+Every command and setting below was replaced by a built-in that does the same job; the old ones are gone from the palette.
+- The extension's own **Test Results** tree view — use the Testing view.
+- `SF Tests: Run Tests in Current Class`, `Run Test Method`, `Re-run Last Class`, `Re-run Failed Tests`, `Run Class Tests`, `Re-run This Method`, `Open Test Result` — use the gutter icons, the Testing view, or **Test: Run Tests in Current File** / **Test: Rerun Last Run** / **Test: Rerun Failed Tests**.
+- `SF Tests: Toggle Inline Coverage` and `SF Tests: Clear Coverage Decorations`, plus the status-bar coverage eye and the `sfTestRunner.showInlineCoverage` setting — use **Test: Toggle Inline Coverage** and the Test Coverage view.
+- `sfTestRunner.showCoverageOnOpen` — opening a class no longer queries the org for coverage at all. VS Code will flag the setting as unknown if it is still in your `settings.json`; delete the line.
+- The run-completion notification (“All 12 tests passed … · coverage 87%”). Results are in the Testing view, coverage is in the Test Coverage view, and the per-class breakdown with the overall percentage stays in the SF Tests output channel.
+- The refusal to re-run one org's failures against another (added in 0.4.2). Re-running is VS Code's own now and always targets the org currently selected; each run is labelled with the org it ran against, and a production target still needs the modal confirmation.
+
+### Upgrading
+- Your Apex tests move from the SF Tests sidebar to VS Code's Testing view; the `sf` command panel stays where it is. If the Testing view looks empty, open any Apex test class or hit the refresh button there — discovery is lazy on purpose, so a large SFDX repo is not scanned at startup.
+- **The plain Run profile does not gather coverage.** The gutter play button runs it, so if you relied on every run producing coverage, use **Run with Coverage** (the dropdown next to the run button, or set it as the default profile from the Testing view's gear menu).
+- Keybindings pointed at the removed `sfTestRunner.*` command ids stop working; repoint them at the `testing.*` built-ins (`testing.runCurrentFile`, `testing.runAtCursor`, `testing.reRunLastRun`, `testing.reRunFailTests`, `testing.toggleInlineCoverage`).
+- A class annotated `@IsTest` that contains no test methods — a `TestDataFactory`, a callout mock — no longer appears as a runnable test. That is deliberate: running one could only ever fail.
+
 ## [0.7.0] - 2026-09-03
 
 ### Changed

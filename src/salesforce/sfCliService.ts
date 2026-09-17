@@ -13,6 +13,9 @@ import { mapTestResult } from './resultMapping';
 interface RunOptions {
   timeoutMs?: number;
   cancellation?: vscode.CancellationToken;
+  /** Ask the CLI for `--code-coverage`. Off for a plain run: gathering coverage
+   *  makes the org do more work, and the "Run" profile has nothing to show it in. */
+  coverage?: boolean;
 }
 
 /** A completed test run plus the per-class coverage the `--code-coverage` flag
@@ -97,28 +100,20 @@ export class SfCliService {
   }
 
   /**
-   * Run Apex tests for a class against `orgUsername` and return the summary plus
-   * the inline per-class coverage from `--code-coverage`. Passing the org
-   * explicitly (rather than reading `this.currentOrg`) is what keeps a run
-   * anchored to the org it started on.
+   * Run a selection of tests against `orgUsername`. Each selector is either a
+   * bare `ClassName` (every test in the class) or `ClassName.methodName` — the
+   * two forms `--tests` accepts, and exactly the ids the test controller gives
+   * its class and method items. Passing the org explicitly (rather than reading
+   * `this.currentOrg`) is what keeps a run anchored to the org it started on.
    */
-  async runApexTests(
-    className: string,
-    orgUsername: string,
-    options: RunOptions = {},
-  ): Promise<TestRunResult> {
-    return this.runTests(['--class-names', className], orgUsername, options);
-  }
-
-  /** Run one or more specific test methods (`Class.method`) against `orgUsername`. */
-  async runApexTestMethods(
-    tests: string[],
+  async runTestSelection(
+    selectors: string[],
     orgUsername: string,
     options: RunOptions = {},
   ): Promise<TestRunResult> {
     const testArgs: string[] = [];
-    for (const t of tests) {
-      testArgs.push('--tests', t);
+    for (const selector of selectors) {
+      testArgs.push('--tests', selector);
     }
     return this.runTests(testArgs, orgUsername, options);
   }
@@ -143,7 +138,7 @@ export class SfCliService {
       'run',
       'test',
       ...selectorArgs,
-      '--code-coverage',
+      ...(options.coverage ? ['--code-coverage'] : []),
       '--result-format',
       'json',
       '--wait',
@@ -168,7 +163,12 @@ export class SfCliService {
       }),
     );
 
-    const result = parsed?.result ?? parsed;
+    // Failing tests exit 100 but still carry a complete `result`, so status is NOT
+    // the signal here — a MISSING result is. Without this, a CLI-level refusal
+    // ("this class name's value is invalid", expired auth) parsed into an empty
+    // summary and the run finished silently with every test marked skipped.
+    if (!parsed || parsed.result == null) throw envelopeError(parsed ?? {}, 'apex run test');
+    const result = parsed.result;
     const summary = mapTestResult(result);
     const coverage = mapRunCoverage(result?.coverage);
     return { summary, coverage };
@@ -231,14 +231,16 @@ export class SfCliService {
     const parsed = await this.logged(args, options, () =>
       this.kit.runJson<any>(args, { signal: toSignal(options.cancellation) }),
     );
-    const result = parsed?.result ?? parsed;
+    if (!parsed || parsed.result == null) throw envelopeError(parsed ?? {}, 'apex get test');
+    const result = parsed.result;
     return { summary: mapTestResult(result), coverage: mapRunCoverage(result?.coverage) };
   }
 
   /**
-   * Query the org's stored aggregate coverage for a class. Used for the
-   * open-file auto-load and the explicit "Refresh Coverage" command — NOT after
-   * a test run (the run returns coverage inline now).
+   * Query the org's stored aggregate coverage for a class: the last run that
+   * touched it in the org, whoever started it. Only caller is the explicit
+   * "Load Coverage from Org" command — NOT a test run, which returns its own
+   * coverage inline.
    */
   async getCoverageForClass(className: string, orgUsername: string): Promise<CoverageInfo | null> {
     const escaped = className.replace(/'/g, "\\'");
