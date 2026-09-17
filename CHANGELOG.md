@@ -2,6 +2,10 @@
 
 All notable changes to the "sf-test-runner" extension are documented here.
 
+## [0.10.0] - 2026-09-18
+
+- **?** in the Tests view title opens a short guide — picking the org, ticking and running tests, reading results and coverage, the CodeLens links — with an **Open README** button for the full documentation.
+
 ## [0.9.0] - 2026-09-17
 
 ### Changed
