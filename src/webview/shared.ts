@@ -36,17 +36,7 @@ export function vscodeApi(): ViewApi {
   };
 }
 
-/** Escape text for interpolation into innerHTML. */
-export function esc(value: string): string {
-  return value
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#39;');
-}
-
-/** Durations the way the mock shows them: `96 ms`, `3.4 s`, `1 m 12 s`. */
+/** Durations the way the views show them: `96 ms`, `3.4 s`, `1 m 12 s`. */
 export function fmtMs(ms: number): string {
   if (!Number.isFinite(ms) || ms < 0) return '—';
   if (ms < 1000) return `${Math.round(ms)} ms`;
@@ -84,7 +74,7 @@ export function el(tag: string, attrs: ElAttrs = {}, children: (Node | string)[]
   return node;
 }
 
-/** The glyph + class pair the mock uses for an outcome. */
+/** The glyph + class pair the views use for an outcome. */
 export const GLYPHS: Record<OutcomeKind, { mark: string; cls: string }> = {
   pass: { mark: '✓', cls: 'g-pass' },
   fail: { mark: '✗', cls: 'g-fail' },
@@ -97,7 +87,7 @@ export function glyph(kind: OutcomeKind): HTMLElement {
   return el('span', { class: `glyph ${cls}`, text: mark });
 }
 
-/** The three coverage bands from the mock: ≥75 green, 50–74 amber, <50 red. */
+/** The three coverage bands: ≥75 green, 50–74 amber, <50 red. */
 export function covBand(pct: number): 'hi' | 'mid' | 'lo' {
   if (pct >= 75) return 'hi';
   return pct >= 50 ? 'mid' : 'lo';

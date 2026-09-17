@@ -33,7 +33,7 @@ export class ApexFileResolver {
     // anything else is neither a name we could match nor one we will glob with.
     if (!/^\w+$/.test(name)) return undefined;
     const ext = isTrigger ? 'trigger' : 'cls';
-    const key = `${ext}:${name.toLowerCase()}`;
+    const key = cacheKey(name, ext);
     const cached = this.cache.get(key);
     if (cached) return cached;
     const matches = await vscode.workspace.findFiles(`**/${name}.${ext}`, '**/node_modules/**', 1);
@@ -55,7 +55,20 @@ export class ApexFileResolver {
       );
       return;
     }
-    const doc = await vscode.workspace.openTextDocument(uri);
+    const ext = opts.isTrigger ? 'trigger' : 'cls';
+    let doc: vscode.TextDocument;
+    try {
+      doc = await vscode.workspace.openTextDocument(uri);
+    } catch {
+      // Only HITS are cached and they are never re-validated, so a file moved or
+      // deleted since the glob would fail this way on every click. Forget it, and
+      // say so — the callers fire this and forget it.
+      this.cache.delete(cacheKey(name, ext));
+      void vscode.window.showWarningMessage(
+        `${name}.${ext} could not be opened (moved or deleted?) — Rescan to refresh.`,
+      );
+      return;
+    }
     const editor = await vscode.window.showTextDocument(doc, { preview: true });
     const line = targetLine(doc, opts);
     if (line === undefined) return;
@@ -75,6 +88,11 @@ export class ApexFileResolver {
   invalidate(): void {
     this.cache.clear();
   }
+}
+
+/** `cls:name` / `trigger:name`, lower-cased — the shape `resolve` stores under. */
+function cacheKey(name: string, ext: string): string {
+  return `${ext}:${name.toLowerCase()}`;
 }
 
 /** Zero-based line to reveal, or undefined to leave the cursor where it is. */

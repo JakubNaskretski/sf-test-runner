@@ -40,8 +40,18 @@ export function runLabel(scope: RunScope, count: number, alias: string): string 
  * Classes in `selectors` that the index knows only from disk. Running one is a
  * guaranteed failure — `--tests` names a class in the ORG — so the runner warns
  * before spending a run on it. Sorted so the warning reads the same every time.
+ *
+ * `local-only` is only EVIDENCE of that once the org half of the index is known
+ * FOR `orgUsername`. Until an org fetch happens (it is opt-in) every local class
+ * carries the stamp by default, and after an org switch the stamp describes the
+ * previous org — in both cases nothing has been checked, so nothing is claimed.
  */
-export function localOnlyClasses(index: TestIndexSnapshot, selectors: readonly string[]): string[] {
+export function localOnlyClasses(
+  index: TestIndexSnapshot,
+  selectors: readonly string[],
+  orgUsername: string | undefined,
+): string[] {
+  if (!sameOrg(index.orgUsername, orgUsername)) return [];
   const byName = new Map(index.classes.map((c) => [c.name.toLowerCase(), c]));
   const out = new Set<string>();
   for (const selector of selectors) {

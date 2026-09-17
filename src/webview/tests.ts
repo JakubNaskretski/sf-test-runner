@@ -609,9 +609,13 @@ function renderTree(s: TestsViewState, u: Ui): void {
     return;
   }
 
+  // The org half of the index only exists after an explicit fetch, and that is
+  // opt-in. Without it every local class is stamped `local-only` by default, so
+  // the "not deployed" badge would be claiming a check that never ran.
+  const orgKnown = s.index.orgUsername !== undefined;
   const frag = document.createDocumentFragment();
   for (const row of rows) {
-    frag.append(classRow(row));
+    frag.append(classRow(row, orgKnown));
     if (row.unknown || !expanded.has(row.entry.name)) continue;
     for (const method of row.methods) frag.append(methodRow(row.entry, method, s.outcomes));
   }
@@ -620,7 +624,7 @@ function renderTree(s: TestsViewState, u: Ui): void {
   if (focused) restoreFocus(u.tree, focused);
 }
 
-function classRow(row: Row): HTMLElement {
+function classRow(row: Row, orgKnown: boolean): HTMLElement {
   const { entry } = row;
   const open = expanded.has(entry.name);
   const st = classState(entry);
@@ -669,7 +673,7 @@ function classRow(row: Row): HTMLElement {
 
   if (entry.source === 'org-only') {
     node.append(el('span', { class: 'badge b-org', text: 'org-only' }));
-  } else if (entry.source === 'local-only') {
+  } else if (orgKnown && entry.source === 'local-only') {
     node.append(
       el('span', {
         class: 'badge b-warn',

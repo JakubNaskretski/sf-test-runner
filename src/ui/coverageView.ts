@@ -4,7 +4,7 @@
  *
  * The provider owns no state. It serialises `PanelState` through
  * `toCoverageViewState()` and hands every inbound message to the `CoverageActions`
- * the integrator supplies — so a collapsed or reloaded view loses nothing, and
+ * extension.ts supplies — so a collapsed or reloaded view loses nothing, and
  * the privileged work (opening files, running CLI commands) stays out of here.
  */
 import * as vscode from 'vscode';

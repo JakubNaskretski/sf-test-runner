@@ -116,11 +116,14 @@ export class TestRunner implements vscode.Disposable {
 
     // Local-only classes do not exist in the org: `--tests` would name something
     // the org has never heard of and the whole run fails, not just that class.
-    const notDeployed = localOnlyClasses(index, selectors);
+    // Only claimed when the index actually holds this org's class list — see
+    // localOnlyClasses; an unfetched org half stamps everything local-only.
+    const target = this.deps.getOrg();
+    const notDeployed = localOnlyClasses(index, selectors, target?.username);
     if (notDeployed.length > 0) {
       const anyway = 'Run anyway';
       const skip = 'Skip them';
-      const alias = this.deps.getOrg()?.alias ?? 'the target org';
+      const alias = target?.alias ?? 'the target org';
       const pick = await vscode.window.showWarningMessage(
         `${notDeployed.length} selected ${notDeployed.length === 1 ? 'class is' : 'classes are'} ` +
           `not deployed to ${alias}.`,
@@ -493,6 +496,10 @@ export class TestRunner implements vscode.Disposable {
           sleep,
           now: () => Date.now(),
           isCancelled: () => cancellation.token.isCancellationRequested,
+          onError: (err, consecutive) => {
+            const detail = err instanceof Error ? err.message : String(err);
+            this.deps.output.appendLine(`  poll ${consecutive} failed, retrying: ${detail}`);
+          },
           onTick: (progress, fresh) => {
             state.updateRun({ progress });
             for (const result of fresh) {
@@ -532,7 +539,9 @@ export class TestRunner implements vscode.Disposable {
         error,
         finishedAt: Date.now(),
         summary: result.summary,
-        testRunId: result.summary.asyncApexJobId ?? undefined,
+        // Keep the id the start call gave us when the finished envelope carries
+        // none — losing it would leave the run unfindable in the org's history.
+        testRunId: result.summary.asyncApexJobId ?? testRunId,
       });
       if (coverage) {
         this.publishCoverage(org, result.coverage, result.summary.asyncApexJobId ?? testRunId);

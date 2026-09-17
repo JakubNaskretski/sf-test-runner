@@ -18,6 +18,17 @@ const TERMINAL = new Set(['Completed', 'Failed', 'Aborted']);
 export const FIRST_POLL_MS = 1500;
 export const POLL_INTERVAL_MS = 3000;
 
+/**
+ * Consecutive failed ticks tolerated before the loop gives up.
+ *
+ * A tick is two `data query` calls, and one of them blipping (a dropped socket,
+ * a momentary API refusal) says nothing about the JOB, which is executing in the
+ * org either way. Ending the run on the first blip reports a healthy run as an
+ * error; the counter only trips when the org has been unreachable for four ticks
+ * running, and a single answer resets it.
+ */
+export const MAX_POLL_FAILURES = 3;
+
 /** The counters a poll reads off the run's `ApexTestRunResult` row. */
 export interface PollStatus {
   status: string;
@@ -41,6 +52,9 @@ export interface PollDeps<R extends PollResult> {
   now(): number;
   /** Once per poll: the counters, plus the results not reported before. */
   onTick(progress: RunProgress, newResults: R[]): void;
+  /** A tick that threw, with how many have now failed in a row. Tolerated ones
+   *  are reported here and nowhere else, so the log keeps the evidence. */
+  onError?(error: unknown, consecutive: number): void;
   isCancelled(): boolean;
 }
 
@@ -57,6 +71,8 @@ export interface PollVerdict {
  * outlives `ceilingMs`. Every poll reports progress through `onTick`; results
  * are de-duplicated by `Class.method`, so `onTick` only ever sees a method the
  * caller has not been told about yet.
+ *
+ * Throws only when `MAX_POLL_FAILURES` consecutive ticks have failed.
  */
 export async function pollUntilDone<R extends PollResult>(
   deps: PollDeps<R>,
@@ -65,6 +81,7 @@ export async function pollUntilDone<R extends PollResult>(
   const startedAt = deps.now();
   const seen = new Set<string>();
   let wait = FIRST_POLL_MS;
+  let failures = 0;
 
   for (;;) {
     if (deps.isCancelled()) return { outcome: 'cancelled' };
@@ -74,8 +91,20 @@ export async function pollUntilDone<R extends PollResult>(
     // not buy the org two more queries for a run nobody is waiting on.
     if (deps.isCancelled()) return { outcome: 'cancelled' };
 
-    const status = await deps.status();
-    const results = await deps.live();
+    let status: PollStatus | null;
+    let results: R[];
+    try {
+      status = await deps.status();
+      results = await deps.live();
+    } catch (err) {
+      failures++;
+      deps.onError?.(err, failures);
+      if (failures > MAX_POLL_FAILURES) throw lostContact(err, failures);
+      // Straight back to the top: a cancel during the failed tick is caught
+      // there, and `wait` is already on the normal interval.
+      continue;
+    }
+    failures = 0;
     const fresh = results.filter((r) => !seen.has(key(r)));
     for (const r of fresh) seen.add(key(r));
 
@@ -104,4 +133,14 @@ export async function pollUntilDone<R extends PollResult>(
 
 function key(result: PollResult): string {
   return `${result.className}.${result.methodName}`;
+}
+
+/** What the user is told when the loop stops watching: we lost the org, the org
+ *  did not lose the job. */
+function lostContact(error: unknown, failures: number): Error {
+  const detail = error instanceof Error ? error.message : String(error);
+  return new Error(
+    `Stopped watching the run after ${failures} failed status queries (${detail}). The org may ` +
+      'still be running the job — "Load Recent Test Runs" picks it up once it finishes.',
+  );
 }

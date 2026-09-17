@@ -1,10 +1,10 @@
 /**
  * The panel stylesheet — one sheet shared by all three webview bundles.
  *
- * This is the approved mock's style block with its `--vs-*` mock tokens replaced
+ * This is the panel's style block with its `--vs-*` design tokens replaced
  * by real `--vscode-*` theme variables, so the views follow the user's theme
- * instead of the mock's hand-picked Light/Dark Modern colours. Class names are
- * kept verbatim from the mock (trow, rrow, cov-row, …) so the mock stays a
+ * instead of hand-picked Light/Dark Modern colours. Class names are
+ * kept stable (trow, rrow, cov-row, …) so the design reference stays a
  * readable reference for the view code.
  *
  * Every `var(--vscode-…)` carries a fallback: a few of these tokens are missing

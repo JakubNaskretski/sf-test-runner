@@ -2,6 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   FIRST_POLL_MS,
+  MAX_POLL_FAILURES,
   POLL_INTERVAL_MS,
   PollStatus,
   PollVerdict,
@@ -29,12 +30,21 @@ async function run(script: {
   results?: FakeResult[][];
   ceilingMs?: number;
   cancelAfter?: number;
-}): Promise<{ verdict: PollVerdict; ticks: Tick[]; waits: number[]; polls: number }> {
+  /** 1-based poll numbers whose query throws instead of answering. */
+  failPolls?: number[];
+}): Promise<{
+  verdict: PollVerdict;
+  ticks: Tick[];
+  waits: number[];
+  polls: number;
+  errors: number[];
+}> {
   let clock = 0;
   let polls = 0;
   let cancelled = false;
   const waits: number[] = [];
   const ticks: Tick[] = [];
+  const errors: number[] = [];
 
   const at = <T>(list: T[] | undefined, fallback: T): T =>
     list && list.length > 0 ? (list[Math.min(polls - 1, list.length - 1)] ?? fallback) : fallback;
@@ -43,6 +53,7 @@ async function run(script: {
     {
       status: async () => {
         polls++;
+        if (script.failPolls?.includes(polls)) throw new Error(`query ${polls} refused`);
         return at(script.statuses, null);
       },
       live: async () => at(script.results, []),
@@ -55,12 +66,13 @@ async function run(script: {
         if (script.cancelAfter !== undefined && polls >= script.cancelAfter) cancelled = true;
         return cancelled;
       },
+      onError: (_err, consecutive) => errors.push(consecutive),
       onTick: (progress, fresh) =>
         ticks.push({ progress, fresh: fresh.map((r) => `${r.className}.${r.methodName}`) }),
     },
     script.ceilingMs ?? 600_000,
   );
-  return { verdict, ticks, waits, polls };
+  return { verdict, ticks, waits, polls, errors };
 }
 
 const processing = (done: number, total: number, failed = 0): PollStatus => ({
@@ -146,4 +158,50 @@ test('a run cancelled before the first sleep never asks the org anything', async
   assert.deepEqual(verdict, { outcome: 'cancelled' });
   assert.equal(polls, 0);
   assert.deepEqual(waits, []);
+});
+
+test('a couple of failed queries are ridden out — the org is still running the job', async () => {
+  const { verdict, ticks, errors } = await run({
+    failPolls: [1, 2],
+    statuses: [null, null, { ...processing(1, 1), status: 'Completed' }],
+  });
+
+  assert.deepEqual(verdict, { outcome: 'completed', status: 'Completed' });
+  // A failed tick reports nothing but the failure; only the third one ticks.
+  assert.deepEqual(errors, [1, 2]);
+  assert.equal(ticks.length, 1);
+});
+
+test('the failure count resets on an answer, so blips never add up', async () => {
+  const { verdict, errors } = await run({
+    failPolls: [1, 2, 3, 5, 6, 7],
+    statuses: [
+      null,
+      null,
+      null,
+      processing(0, 1),
+      null,
+      null,
+      null,
+      { ...processing(1, 1), status: 'Completed' },
+    ],
+  });
+
+  assert.equal(verdict.outcome, 'completed');
+  assert.deepEqual(errors, [1, 2, 3, 1, 2, 3]);
+});
+
+test('an org that stays unreachable ends the run, saying the job may still be live', async () => {
+  const failPolls = Array.from({ length: MAX_POLL_FAILURES + 1 }, (_, i) => i + 1);
+
+  await assert.rejects(
+    () => run({ failPolls, statuses: [] }),
+    (err: Error) => {
+      assert.match(err.message, /Stopped watching the run after 4 failed status queries/);
+      assert.match(err.message, /query 4 refused/);
+      assert.match(err.message, /may still be running the job/);
+      assert.match(err.message, /Load Recent Test Runs/);
+      return true;
+    },
+  );
 });

@@ -747,12 +747,25 @@ export function countAborted(response: unknown): number {
   return response.filter((e: any) => e?.success === true).length;
 }
 
+/**
+ * One signal per token, for the lifetime of that token.
+ *
+ * The poll loop calls this twice a tick for the SAME token, and the listener a
+ * `CancellationToken` hands out cannot be unsubscribed once the token's source
+ * is disposed — so minting a fresh controller per call piles up listeners for
+ * as long as the run lasts. The token is the key, so the entry dies with it.
+ */
+const SIGNALS = new WeakMap<vscode.CancellationToken, AbortSignal>();
+
 /** Adapt a VS Code CancellationToken to an AbortSignal for the kit's run API. */
 function toSignal(token: vscode.CancellationToken | undefined): AbortSignal | undefined {
   if (!token) return undefined;
+  const cached = SIGNALS.get(token);
+  if (cached) return cached;
   const controller = new AbortController();
   if (token.isCancellationRequested) controller.abort();
   else token.onCancellationRequested(() => controller.abort());
+  SIGNALS.set(token, controller.signal);
   return controller.signal;
 }
 

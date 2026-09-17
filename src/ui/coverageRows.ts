@@ -20,8 +20,8 @@ export const DEPLOY_FLOOR_PCT = 75;
 export type CoverageBand = 'hi' | 'mid' | 'lo';
 
 /**
- * The three bands from the mock. This is the single definition; the identical
- * `covBand` in `webview/shared.ts` is a wave-0 twin that stays untouched
+ * The three coverage bands. This is the single definition; the identical
+ * `covBand` in `webview/shared.ts` is a browser-side twin that stays untouched
  * because that module is DOM-only and cannot be imported by the host.
  */
 export function band(pct: number): CoverageBand {

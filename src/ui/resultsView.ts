@@ -1,7 +1,7 @@
 /**
  * The Results view (`sfTestRunner.results`) — the webview that reads the run
  * held in {@link PanelState} and renders it as the run bar + class→method tree
- * from the approved mock.
+ * from the design.
  *
  * The provider owns no state of its own: it serialises `state.toResultsViewState()`
  * on every `run` change (which is also the slice that carries the results filter

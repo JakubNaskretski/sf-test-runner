@@ -10,7 +10,11 @@ import {
   summaryText,
 } from './runLabel';
 
+const ORG = 'tester@example.com';
+
 const index: TestIndexSnapshot = {
+  orgUsername: ORG,
+  orgFetchedAt: Date.UTC(2026, 8, 17, 11, 0, 0),
   classes: [
     { name: 'AccountServiceTest', source: 'both', methods: [{ name: 'testCreate' }] },
     { name: 'InvoiceCalculatorTest', source: 'local-only', methods: [{ name: 'testNetTotal' }] },
@@ -133,17 +137,30 @@ test('summaryText reports a cancelled run as CANCELLED', () => {
   assert.match(summaryText(record({ status: 'cancelled', summary: undefined })), /^CANCELLED · /);
 });
 
+const SELECTORS = [
+  'AccountServiceTest',
+  'InvoiceCalculatorTest.testNetTotal',
+  'InvoiceCalculatorTest.testTax',
+  'LegacyPricingTest',
+  'UnknownTest',
+];
+
 test('localOnlyClasses finds classes the org does not have, sorted and deduped', () => {
-  assert.deepEqual(
-    localOnlyClasses(index, [
-      'AccountServiceTest',
-      'InvoiceCalculatorTest.testNetTotal',
-      'InvoiceCalculatorTest.testTax',
-      'LegacyPricingTest',
-      'UnknownTest',
-    ]),
-    ['InvoiceCalculatorTest'],
-  );
+  assert.deepEqual(localOnlyClasses(index, SELECTORS, ORG), ['InvoiceCalculatorTest']);
+  // Usernames are compared case-insensitively, as the CLI treats them.
+  assert.deepEqual(localOnlyClasses(index, SELECTORS, ORG.toUpperCase()), [
+    'InvoiceCalculatorTest',
+  ]);
+});
+
+test('localOnlyClasses claims nothing while the org half of the index is unknown', () => {
+  // The org fetch is opt-in, so on a fresh install every local class carries the
+  // local-only stamp and none of it has been checked against the org.
+  const neverFetched: TestIndexSnapshot = { classes: index.classes };
+  assert.deepEqual(localOnlyClasses(neverFetched, SELECTORS, ORG), []);
+  // Same for an index fetched from a different org, and for no org at all.
+  assert.deepEqual(localOnlyClasses(index, SELECTORS, 'other@example.com'), []);
+  assert.deepEqual(localOnlyClasses(index, SELECTORS, undefined), []);
 });
 
 test('dropClasses removes every selector of the named classes', () => {

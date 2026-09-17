@@ -13,7 +13,7 @@ import { ApexFileResolve, classNameFromUri } from './coverageDecorator';
 import { overallOf, rowsFor } from './coverageRows';
 import { PanelState } from './panelState';
 
-/** Registered by the integrator; the item is only the trigger. */
+/** Registered in extension.ts; the item is only the trigger. */
 const TOGGLE_COMMAND = 'sfTestRunner.toggleCoveragePaint';
 
 export class CoverageStatusBar implements vscode.Disposable {
