@@ -3,8 +3,8 @@ const esbuild = require('esbuild');
 const watch = process.argv.includes('--watch');
 const production = process.env.NODE_ENV === 'production' || process.argv.includes('--production');
 
-/** @type {import('esbuild').BuildOptions} */
-const options = {
+/** The extension host bundle. @type {import('esbuild').BuildOptions} */
+const nodeOptions = {
   entryPoints: ['src/extension.ts'],
   bundle: true,
   outfile: 'dist/extension.js',
@@ -17,13 +17,31 @@ const options = {
   logLevel: 'info',
 };
 
+/** The three panel webviews. They run in a browser: no `vscode` module, no
+ *  Node builtins — the only host bridge is `acquireVsCodeApi()`.
+ *  @type {import('esbuild').BuildOptions} */
+const browserOptions = {
+  entryPoints: ['src/webview/tests.ts', 'src/webview/results.ts', 'src/webview/coverage.ts'],
+  bundle: true,
+  outdir: 'dist/webview',
+  platform: 'browser',
+  target: 'es2020',
+  format: 'iife',
+  sourcemap: !production,
+  minify: production,
+  logLevel: 'info',
+};
+
 async function main() {
   if (watch) {
-    const ctx = await esbuild.context(options);
-    await ctx.watch();
-    console.log('esbuild: watching...');
+    const contexts = await Promise.all([
+      esbuild.context(nodeOptions),
+      esbuild.context(browserOptions),
+    ]);
+    await Promise.all(contexts.map((ctx) => ctx.watch()));
+    console.log('esbuild: watching extension + webviews...');
   } else {
-    await esbuild.build(options);
+    await Promise.all([esbuild.build(nodeOptions), esbuild.build(browserOptions)]);
   }
 }
 

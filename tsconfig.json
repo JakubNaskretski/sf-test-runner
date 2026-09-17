@@ -18,5 +18,5 @@
     "noUnusedParameters": true
   },
   "include": ["src/**/*"],
-  "exclude": ["node_modules", "dist", ".vscode-test"]
+  "exclude": ["node_modules", "dist", ".vscode-test", "src/webview"]
 }
