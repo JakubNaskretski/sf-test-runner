@@ -2,7 +2,7 @@
   "name": "sf-test-runner",
   "displayName": "Salesforce Test Runner",
   "description": "Run Apex tests from a sidebar panel: pick the target org, tick classes and methods across local and org tests, read parsed results with clickable failures, and see coverage in the Coverage view and painted on your editor lines. Every sf CLI command we execute is listed in a collapsible log. Reuses your existing sf CLI auth.",
-  "version": "0.9.0",
+  "version": "0.10.0",
   "publisher": "Skrety",
   "icon": "icons/plugin-icon.png",
   "license": "MIT",
@@ -141,6 +141,11 @@
         "command": "sfTestRunner.showOutput",
         "title": "SF Tests: Show Output Channel",
         "icon": "$(output)"
+      },
+      {
+        "command": "sfTestRunner.help",
+        "title": "SF Tests: How It Works",
+        "icon": "$(question)"
       }
     ],
     "menus": {
@@ -218,6 +223,11 @@
           "command": "sfTestRunner.showOutput",
           "when": "view == sfTestRunner.commands",
           "group": "navigation@2"
+        },
+        {
+          "command": "sfTestRunner.help",
+          "when": "view == sfTestRunner.tests",
+          "group": "navigation@9"
         }
       ],
       "view/item/context": [

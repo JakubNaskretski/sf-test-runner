@@ -42,6 +42,7 @@ The **SF Tests** activity-bar icon opens four views. Each is a collapsible secti
 | `SF Tests: Toggle Coverage Painting` / `Clear Coverage` | The eye and the Clear button of the Coverage view. |
 | `SF Tests: Load Coverage from Org` | The stored coverage of one class from the org's last run, whoever ran it. |
 | `SF Tests: Clear Command History` / `Copy Command` / `Show Output Channel` | The command log's actions and the full text log. |
+| `SF Tests: How It Works` | The **?** in the Tests view title: a short usage guide with a link to this README. |
 
 ## Settings
 

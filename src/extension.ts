@@ -361,6 +361,7 @@ export function activate(context: vscode.ExtensionContext): void {
       if (entry) void copyCommandToClipboard(entry);
     }),
     vscode.commands.registerCommand('sfTestRunner.showOutput', () => output.show(true)),
+    vscode.commands.registerCommand('sfTestRunner.help', () => showHelp(context)),
   );
 
   // Non-blocking: activation returns while the org and the first scan settle.
@@ -370,6 +371,31 @@ export function activate(context: vscode.ExtensionContext): void {
 
 export function deactivate(): void {
   // disposables clean themselves up
+}
+
+// The "?" in the Tests view title: a short plain-text guide (a modal's detail renders no markdown).
+async function showHelp(context: vscode.ExtensionContext): Promise<void> {
+  const HELP = `1. Click the SF Tests icon in the Activity Bar: Tests, Results, Coverage and the Command log.
+2. Pick the target org in the dropdown at the top of Tests; ＋ logs in to another org.
+3. Tick classes or methods. Rescan re-reads the workspace; Fetch org tests adds org-only classes.
+4. Run Selected or Run All Local; the ⋯ menu runs every test in the org.
+5. Results fill in as methods finish: click a stack frame to open the line, Re-run failed to retry.
+6. Coverage lists the worst classes and paints covered lines; the status-bar eye toggles the paint.
+7. ▶ Run Class / ▶ Run and Run with Coverage links sit above each test class and method.
+8. Needs the sf CLI on PATH and a logged-in org; runs against production ask for confirmation.`;
+  const choice = await vscode.window.showInformationMessage('SF Tests', { modal: true, detail: HELP }, 'Open README');
+  if (choice === 'Open README') {
+    // vsce ships the file as readme.md while the dev host has README.md: open whichever exists
+    for (const name of ['readme.md', 'README.md']) {
+      const uri = vscode.Uri.joinPath(context.extensionUri, name);
+      try {
+        await vscode.workspace.fs.stat(uri);
+        await vscode.commands.executeCommand('markdown.showPreview', uri);
+        return;
+      } catch { /* try the other spelling */ }
+    }
+    void vscode.window.showWarningMessage('README not found in the extension folder.');
+  }
 }
 
 function handleError(output: vscode.OutputChannel, err: unknown): void {
