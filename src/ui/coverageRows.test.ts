@@ -76,19 +76,20 @@ test('rowsFor sorts worst first and breaks ties by name', () => {
     covered: 43,
     total: 74,
     hasSource: true,
-    focus: false,
+    isTrigger: false,
   });
 });
 
-test('rowsFor marks the classes the run was aimed at, case-insensitively', () => {
+test('rowsFor carries the target record onto the rows it belongs to', () => {
   const marked = rowsFor(
     [info('AccountService', 1, 1), info('ContactMergeService', 1, 1)],
     () => true,
-    classesUnderTest(['AccountserviceTest']),
+    (name) =>
+      name === 'AccountService' ? { tier: 'declared', by: ['AccountServiceTest'] } : undefined,
   );
   assert.deepEqual(
-    marked.filter((r) => r.focus).map((r) => r.className),
-    ['AccountService'],
+    marked.filter((r) => r.target).map((r) => [r.className, r.target?.tier]),
+    [['AccountService', 'declared']],
   );
 });
 

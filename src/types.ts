@@ -1,3 +1,5 @@
+import type { CoverageTarget } from './ui/coverageTargets';
+
 export interface OrgInfo {
   alias: string;
   username: string;
@@ -30,6 +32,12 @@ export interface TestRunSummary {
   skipped: number;
   testTotalTime: number;
   results: TestMethodResult[];
+}
+
+/** An Apex file the workspace scan walked: its basename and which kind it is. */
+export interface ApexFileName {
+  name: string;
+  isTrigger: boolean;
 }
 
 export interface CoverageInfo {
@@ -81,6 +89,9 @@ export interface TestClassEntry {
   orgId?: string;
   namespace?: string;
   methods: TestMethodEntry[];
+  /** Classes and triggers the class DECLARES it tests, from `@IsTest(testFor=…)`
+   *  (API v66+). Absent or empty means it declared nothing. */
+  testFor?: string[];
   /** True when the org listed the class but its methods were never classified.
    *  Such a class can only be selected whole (selection key is the bare name). */
   methodsUnknown?: boolean;
@@ -133,10 +144,10 @@ export interface CoverageSnapshot {
   at: number;
   runId?: string;
   /**
-   * Lower-cased names of the classes the run was aimed at (see
-   * `classesUnderTest`). The coverage table leads with these and folds the rest
-   * away. Empty or absent ⇒ nothing to lead with, so every row is shown.
+   * What the run was aimed at, best evidence first (see `resolveTargets`). The
+   * coverage table leads with these and folds the rest away; empty or absent ⇒
+   * nothing to lead with, so every row is shown flat.
    */
-  focus?: string[];
+  targets?: CoverageTarget[];
   infos: CoverageInfo[];
 }

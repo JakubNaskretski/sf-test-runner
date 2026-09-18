@@ -200,6 +200,18 @@ select, input[type="text"] {
 .cov-chip.on { color: var(--sfr-fg); border-color: var(--sfr-btn-bg); background: var(--sfr-sel); }
 .cov-chip input { margin: 0; width: 12px; height: 12px; accent-color: var(--sfr-btn-bg); }
 
+.cov-band {
+  display: flex; align-items: center; gap: 6px; padding: 5px 10px 2px;
+  font-size: 10px; text-transform: uppercase; letter-spacing: .04em;
+  color: var(--sfr-muted);
+}
+.cov-band-n {
+  border: 1px solid var(--sfr-border); border-radius: 2px; padding: 0 4px;
+  letter-spacing: 0;
+}
+.cov-row.unexercised .cpct, .cov-row.unexercised .clines { color: var(--sfr-warn); }
+.cov-row.unexercised .cbar { opacity: .3; }
+
 .cov-rest > summary {
   cursor: pointer; font-size: 11px; color: var(--sfr-muted);
   padding: 4px 10px; user-select: none;

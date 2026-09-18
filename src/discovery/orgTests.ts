@@ -14,7 +14,12 @@
  */
 import type * as vscode from 'vscode';
 import type { SfCliService } from '../salesforce/sfCliService';
-import { findClassDecl, findTestMethods, hasApexTests } from '../salesforce/testMethods';
+import {
+  findClassDecl,
+  findTestForTargets,
+  findTestMethods,
+  hasApexTests,
+} from '../salesforce/testMethods';
 import { TestMethodEntry } from '../types';
 
 /** One unmanaged class the org reported, classified if we had to look. */
@@ -26,6 +31,9 @@ export interface OrgClassRecord {
   /** Empty for a class we matched to a local file — the local entry owns the
    *  methods, because its lines point at a file the user can actually open. */
   methods: TestMethodEntry[];
+  /** Classes and triggers declared with `@IsTest(testFor=…)`, when the body was
+   *  read. The local entry wins when the class is on disk too. */
+  testFor?: string[];
   /** The org listed the class but its `Body` came back empty, so we never
    *  classified it. Honest "unknown", never guessed from the name. */
   methodsUnknown?: boolean;
@@ -136,8 +144,8 @@ export class OrgTestFetcher {
           classes.push({ ...base, isTest: false, methods: [], methodsUnknown: true });
           continue;
         }
-        const { isTest, methods } = classifyBody(row.name, body);
-        classes.push({ ...base, isTest, methods });
+        const { isTest, methods, testFor } = classifyBody(row.name, body);
+        classes.push({ ...base, isTest, methods, ...(testFor ? { testFor } : {}) });
       }
     }
 
@@ -160,13 +168,18 @@ export class OrgTestFetcher {
 export function classifyBody(
   name: string,
   body: string,
-): { isTest: boolean; methods: TestMethodEntry[] } {
+): { isTest: boolean; methods: TestMethodEntry[]; testFor?: string[] } {
   if (!hasApexTests(body)) return { isTest: false, methods: [] };
   const lines = body.split(/\r?\n/);
   const decl = findClassDecl(lines);
   const methods = findTestMethods(lines, decl?.className ?? name);
   if (methods.length === 0) return { isTest: false, methods: [] };
-  return { isTest: true, methods: methods.map((m) => ({ name: m.methodName })) };
+  const testFor = findTestForTargets(lines);
+  return {
+    isTest: true,
+    methods: methods.map((m) => ({ name: m.methodName })),
+    ...(testFor.length > 0 ? { testFor } : {}),
+  };
 }
 
 function cacheKey(orgUsername: string): string {

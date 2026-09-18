@@ -16,7 +16,7 @@ import { PanelState } from './panelState';
 /** What the view is allowed to ask the host to do. */
 export interface CoverageActions {
   /** Open the class's local file (and paint it). */
-  open(className: string): void;
+  open(className: string, isTrigger?: boolean): void;
   /** Turn editor painting on or off. */
   setPaint(on: boolean): void;
   /** Drop the snapshot — table and decorations both. */
@@ -132,7 +132,9 @@ export class CoverageViewProvider implements vscode.WebviewViewProvider, vscode.
         this.deps.actions.clear();
         return;
       case 'coverage:open':
-        if (CLASS_NAME.test(message.className)) this.deps.actions.open(message.className);
+        if (CLASS_NAME.test(message.className)) {
+          this.deps.actions.open(message.className, message.isTrigger === true);
+        }
         return;
       case 'coverage:fromOrg':
         if (CLASS_NAME.test(message.className)) this.deps.actions.fromOrg(message.className);

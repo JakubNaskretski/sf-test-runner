@@ -311,8 +311,8 @@
         },
         "sfTestRunner.autoShowOutput": {
           "type": "boolean",
-          "default": true,
-          "description": "Reveal the SF Tests output channel when a test run starts or a recent run is loaded. Opening a test result always reveals it."
+          "default": false,
+          "description": "Reveal the SF Tests output channel when a test run starts or a recent run is loaded. Off by default: the Results view shows the run live. Opening a test result always reveals the channel."
         },
         "sfTestRunner.runWithCoverage": {
           "type": "boolean",
