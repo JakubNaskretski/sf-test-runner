@@ -315,6 +315,7 @@ export class PanelState implements vscode.Disposable {
     return {
       snapshot: {
         label: snapshot.label,
+        scope: snapshot.runId === undefined ? 'org' : 'run',
         at: snapshot.at,
         orgUsername: snapshot.orgUsername,
         overall: total === 0 ? null : Math.round((covered / total) * 100),

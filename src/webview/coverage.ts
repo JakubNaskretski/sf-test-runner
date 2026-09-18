@@ -55,10 +55,20 @@ function timeOf(at: number): string {
 
 function header(snapshot: CoverageViewSnapshot): HTMLElement {
   const count = snapshot.rows.length;
-  const overallText = snapshot.overall === null ? 'no line data' : `${snapshot.overall}% overall`;
+  const classes = `${count} ${count === 1 ? 'class' : 'classes'}`;
+  const fromRun = snapshot.scope === 'run';
+  const overallText =
+    snapshot.overall === null
+      ? 'no line data'
+      : count === 1
+        ? `${snapshot.overall}%`
+        : `${snapshot.overall}% across ${classes}`;
+  // Say where the number is from before saying what it is. An unqualified
+  // percentage reads as the org's official coverage; this is either what one
+  // run measured or one class's stored aggregate, and never the whole org.
   const title = el('div', {
     class: 'cov-title',
-    text: `Coverage · ${overallText} · ${count} ${count === 1 ? 'class' : 'classes'} · ${snapshot.label}`,
+    text: `${fromRun ? 'From this run' : "Stored in the org"} · ${overallText}`,
     title: `${snapshot.label} · ${snapshot.orgUsername} · ${timeOf(snapshot.at)}`,
   });
 
@@ -71,7 +81,11 @@ function header(snapshot: CoverageViewSnapshot): HTMLElement {
 
   const legend = el('div', {
     class: 'cov-legend',
-    text: 'Worst first. A production deploy is blocked below 75% org-wide.',
+    text: fromRun
+      ? `Only the ${classes} this run exercised, averaged by line — not the org's ` +
+        'overall coverage. Worst first; a production deploy is blocked below 75% org-wide.'
+      : "One class, from whichever run last covered it in the org — any user's, not " +
+        'necessarily yours. A production deploy is blocked below 75% org-wide.',
   });
 
   return el('div', { class: 'cov-overall' }, [title, bar, legend]);

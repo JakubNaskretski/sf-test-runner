@@ -138,6 +138,13 @@ export interface CoverageRow {
 /** The view's flattened read of a `CoverageSnapshot` (src/types.ts). */
 export interface CoverageViewSnapshot {
   label: string;
+  /**
+   * Where the numbers came from: 'run' is coverage the run itself measured,
+   * 'org' is the org's stored aggregate for one class (last run, any user).
+   * The header says which in words — an overall percentage with no provenance
+   * reads as the org's official coverage, which neither of these is.
+   */
+  scope: 'run' | 'org';
   at: number;
   orgUsername: string;
   /** null when nothing measurable came back (no lines at all). */
