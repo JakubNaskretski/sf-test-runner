@@ -10,6 +10,7 @@
 import * as vscode from 'vscode';
 import { kindOf, orgBadge } from '../kit/orgs';
 import {
+  ApexFileName,
   CoverageSnapshot,
   OrgInfo,
   RunRecord,
@@ -58,6 +59,9 @@ export class PanelState implements vscode.Disposable {
   /** Classes that have a file on disk — drives the coverage table's "no local
    *  source" greying. Empty means "not known yet", and rows stay openable. */
   private _localClassNames = new Set<string>();
+  /** Lower-cased names of the walked files that are `.trigger`, so a coverage
+   *  row opens the right file. */
+  private _localTriggerNames = new Set<string>();
 
   constructor(private readonly memento: vscode.Memento) {
     const stored = this.memento.get<string[]>(SELECTION_KEY, []);
@@ -93,8 +97,13 @@ export class PanelState implements vscode.Disposable {
     }
   }
 
-  setLocalClassNames(names: Iterable<string>): void {
-    this._localClassNames = new Set(names);
+  setLocalClassNames(names: Iterable<ApexFileName>): void {
+    this._localClassNames = new Set<string>();
+    this._localTriggerNames = new Set<string>();
+    for (const file of names) {
+      this._localClassNames.add(file.name);
+      if (file.isTrigger) this._localTriggerNames.add(file.name.toLowerCase());
+    }
     this.emitter.fire('coverage');
   }
 
@@ -297,13 +306,32 @@ export class PanelState implements vscode.Disposable {
     if (!snapshot) return { snapshot: undefined, paint: this.paintCoverage };
     // The rows are `coverageRows`' arithmetic, not a second copy of it: the
     // status bar and this table must never disagree by a rounding step.
-    const rows = rowsFor(
-      snapshot.infos,
+    const targets = new Map((snapshot.targets ?? []).map((t) => [t.name.toLowerCase(), t]));
+    const isTrigger = (name: string): boolean => this._localTriggerNames.has(name.toLowerCase());
+    const hasSource = (name: string): boolean =>
       // Nothing known about local files yet ⇒ assume the row can be opened; the
       // open handler reports it if the file really is missing.
-      (name) => this._localClassNames.size === 0 || this._localClassNames.has(name),
-      new Set(snapshot.focus ?? []),
-    );
+      this._localClassNames.size === 0 || this._localClassNames.has(name);
+    const rows = rowsFor(snapshot.infos, hasSource, (name) => {
+      const target = targets.get(name.toLowerCase());
+      return target ? { tier: target.tier, by: target.by } : undefined;
+    }).map((row) => ({ ...row, isTrigger: isTrigger(row.className) }));
+    // A class a `testFor` declared but the run never reached has no coverage row
+    // of its own; it is the most useful thing the declaration can tell you, so
+    // it gets a row with no percentage rather than being dropped.
+    for (const target of targets.values()) {
+      if (!target.unexercised) continue;
+      rows.unshift({
+        className: target.name,
+        pct: 0,
+        covered: 0,
+        total: 0,
+        hasSource: hasSource(target.name),
+        isTrigger: isTrigger(target.name),
+        target: { tier: target.tier, by: target.by },
+        unexercised: true,
+      });
+    }
     return {
       snapshot: {
         label: snapshot.label,
@@ -311,6 +339,9 @@ export class PanelState implements vscode.Disposable {
         at: snapshot.at,
         orgUsername: snapshot.orgUsername,
         overall: overallOf(snapshot.infos),
+        targetOverall: overallOf(
+          snapshot.infos.filter((info) => targets.has(info.className.toLowerCase())),
+        ),
         rows,
       },
       paint: this.paintCoverage,

@@ -178,3 +178,36 @@ function hasAnnotationAbove(lines: string[], index: number): boolean {
 function isNoise(name: string): boolean {
   return /^(if|for|while|switch|catch|return|new|else|do|try)$/i.test(name);
 }
+
+/**
+ * Class names a test class DECLARES it tests, from Salesforce's `testFor`
+ * annotation property (API v66+): `@IsTest(testFor='ApexClass:Foo')`, on the
+ * class or on a method, one or more comma-separated `Kind:Name` tokens where
+ * Kind is `ApexClass` or `ApexTrigger` and Name may carry a `.method` suffix.
+ *
+ * Read from the source text on purpose: the Tooling API's SymbolTable reports
+ * the annotation as a bare `IsTest` with no properties, so the body is the only
+ * place the declaration survives.
+ */
+export function findTestForTargets(lines: string[]): string[] {
+  const text = stripComments(lines.join('\n'));
+  const out: string[] = [];
+  const seen = new Set<string>();
+  for (const annotation of text.matchAll(/@\s*isTest\s*\(([^)]*)\)/gi)) {
+    for (const property of annotation[1].matchAll(/testFor\s*=\s*'([^']*)'/gi)) {
+      for (const token of property[1].split(/[,\s]+/)) {
+        // `ApexClass:Foo` and `ApexTrigger:Bar.method` both name their target in
+        // the middle segment; a bare name is taken as written.
+        const name = (token.includes(':') ? token.slice(token.indexOf(':') + 1) : token)
+          .split('.')[0]
+          .trim();
+        if (!/^\w+$/.test(name)) continue;
+        const key = name.toLowerCase();
+        if (seen.has(key)) continue;
+        seen.add(key);
+        out.push(name);
+      }
+    }
+  }
+  return out;
+}

@@ -132,8 +132,14 @@ export interface CoverageRow {
   total: number;
   /** False for a class with no local file — the row is greyed and does not open. */
   hasSource: boolean;
-  /** True for a class the run was aimed at; those rows lead the table. */
-  focus: boolean;
+  /** Set when the run was aimed at this class: how we know, and which test
+   *  classes pointed here. Absent ⇒ the run merely touched it. */
+  target?: { tier: 'declared' | 'named' | 'truncated'; by: string[] };
+  /** Declared by a `testFor` annotation, but the run never exercised it: the
+   *  row has no percentage at all. */
+  unexercised?: boolean;
+  /** The row is a trigger, not a class — it opens a different file. */
+  isTrigger: boolean;
 }
 
 /** The view's flattened read of a `CoverageSnapshot` (src/types.ts). */
@@ -145,6 +151,9 @@ export interface CoverageViewSnapshot {
   orgUsername: string;
   /** null when nothing measurable came back (no lines at all). */
   overall: number | null;
+  /** The same arithmetic over the targeted classes only — what the big bar
+   *  measures. null when the run identified no target. */
+  targetOverall: number | null;
   rows: CoverageRow[];
 }
 
@@ -157,7 +166,7 @@ export interface CoverageViewState {
 export type CoverageHostMessage = { type: 'coverage:state'; state: CoverageViewState };
 
 export type CoverageViewMessage =
-  | { type: 'coverage:open'; className: string }
+  | { type: 'coverage:open'; className: string; isTrigger?: boolean }
   | { type: 'coverage:setPaint'; on: boolean }
   | { type: 'coverage:clear' }
   | { type: 'coverage:fromOrg'; className: string }

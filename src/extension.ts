@@ -57,7 +57,7 @@ export function activate(context: vscode.ExtensionContext): void {
     getOrg: () => sfCli.getCurrentOrg(),
     resolver,
     revealOutput: () => {
-      if (vscode.workspace.getConfiguration('sfTestRunner').get<boolean>('autoShowOutput', true)) {
+      if (vscode.workspace.getConfiguration('sfTestRunner').get<boolean>('autoShowOutput', false)) {
         output.show(true);
       }
     },
@@ -214,7 +214,7 @@ export function activate(context: vscode.ExtensionContext): void {
   };
 
   const coverageActions: CoverageActions = {
-    open: (className) => void resolver.open(className),
+    open: (className, isTrigger) => void resolver.open(className, { isTrigger }),
     setPaint: (on) => void state.setPaintCoverage(on),
     clear: () => state.setCoverage(undefined),
     fromOrg: (className) => void runner.loadOrgCoverage(className),

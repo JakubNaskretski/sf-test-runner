@@ -54,23 +54,26 @@ export function pctOf(info: CoverageInfo): number {
  *
  * @param hasSource decides the greyed "no local source" rows — a class the org
  *                  measured but the workspace does not have cannot be opened.
- * @param focus lower-cased names of the classes the run was aimed at (see
- *              {@link classesUnderTest}); those rows lead the table.
+ * @param target says whether the run was aimed at a class (see `resolveTargets`);
+ *               those rows lead the table.
  */
 export function rowsFor(
   infos: CoverageInfo[],
   hasSource: (className: string) => boolean,
-  focus: ReadonlySet<string> = new Set(),
+  target: (className: string) => CoverageRow['target'] = () => undefined,
 ): CoverageRow[] {
   const rows = infos.map((info): CoverageRow => {
     const total = totalLinesOf(info);
+    const hit = target(info.className);
     return {
       className: info.className,
       pct: pctOf(info),
       covered: info.numLinesCovered,
       total,
       hasSource: hasSource(info.className),
-      focus: focus.has(info.className.toLowerCase()),
+      ...(hit ? { target: hit } : {}),
+      // Set by the caller that knows the workspace; a name alone cannot say.
+      isTrigger: false,
     };
   });
   rows.sort((a, b) => a.pct - b.pct || a.className.localeCompare(b.className));

@@ -37,7 +37,7 @@ import {
   TestMethodResult,
   TestRunSummary,
 } from '../types';
-import { classesUnderTest } from '../ui/coverageRows';
+import { resolveTargets } from '../ui/coverageTargets';
 import { ApexFileResolver } from '../ui/openApex';
 import { PanelState } from '../ui/panelState';
 import type { OutcomeKind } from '../webview/protocol';
@@ -649,9 +649,26 @@ export class TestRunner implements vscode.Disposable {
       orgUsername: org.username,
       at: Date.now(),
       runId,
-      focus: [...classesUnderTest(ranTestClasses)],
+      targets: this.targetsFor(ranTestClasses, infos.map((i) => i.className)),
       infos,
     });
+  }
+
+  /**
+   * What the run was aimed at. The declarations come from the index, which both
+   * halves of discovery already parsed out of the class bodies — no extra I/O,
+   * and a test class the index has never seen simply declares nothing.
+   */
+  private targetsFor(ranTestClasses: Iterable<string>, coveredNames: string[]) {
+    const byName = new Map<string, readonly string[]>();
+    for (const entry of this.deps.state.index.classes) {
+      if (entry.testFor?.length) byName.set(entry.name.toLowerCase(), entry.testFor);
+    }
+    return resolveTargets(
+      ranTestClasses,
+      (testClass) => byName.get(testClass.toLowerCase()) ?? [],
+      coveredNames,
+    );
   }
 
   private logSummary(

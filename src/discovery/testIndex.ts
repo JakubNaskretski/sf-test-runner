@@ -39,6 +39,11 @@ export function buildIndex(local: TestClassEntry[], org?: OrgTestClasses): TestI
         source: 'both',
         orgId: record.orgId,
         ...(record.namespace ? { namespace: record.namespace } : {}),
+        // The local file is the one the user edits, so its declaration wins;
+        // fall back to the org's when the local scan found none.
+        ...(existing.testFor ?? record.testFor
+          ? { testFor: existing.testFor ?? record.testFor }
+          : {}),
       });
       continue;
     }
@@ -49,6 +54,7 @@ export function buildIndex(local: TestClassEntry[], org?: OrgTestClasses): TestI
       orgId: record.orgId,
       ...(record.namespace ? { namespace: record.namespace } : {}),
       methods: record.methods,
+      ...(record.testFor ? { testFor: record.testFor } : {}),
       ...(record.methodsUnknown ? { methodsUnknown: true } : {}),
     });
   }

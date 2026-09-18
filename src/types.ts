@@ -32,6 +32,28 @@ export interface TestRunSummary {
   results: TestMethodResult[];
 }
 
+/** How well we know that a run was aimed at a class: `declared` is the `testFor`
+ *  annotation, the other two are inference from the name. */
+export type TargetTier = 'declared' | 'named' | 'truncated';
+
+export interface CoverageTarget {
+  /** Class or trigger name, spelled as the coverage row spells it where there
+   *  is one, otherwise as the annotation declared it. */
+  name: string;
+  tier: TargetTier;
+  /** The test classes that pointed here, for the row's tooltip. */
+  by: string[];
+  /** Declared by an annotation, but the run never exercised it — a stale
+   *  `testFor` is worth showing, not hiding. */
+  unexercised?: boolean;
+}
+
+/** An Apex file the workspace scan walked: its basename and which kind it is. */
+export interface ApexFileName {
+  name: string;
+  isTrigger: boolean;
+}
+
 export interface CoverageInfo {
   className: string;
   numLinesCovered: number;
@@ -81,6 +103,9 @@ export interface TestClassEntry {
   orgId?: string;
   namespace?: string;
   methods: TestMethodEntry[];
+  /** Classes and triggers the class DECLARES it tests, from `@IsTest(testFor=…)`
+   *  (API v66+). Absent or empty means it declared nothing. */
+  testFor?: string[];
   /** True when the org listed the class but its methods were never classified.
    *  Such a class can only be selected whole (selection key is the bare name). */
   methodsUnknown?: boolean;
@@ -133,10 +158,10 @@ export interface CoverageSnapshot {
   at: number;
   runId?: string;
   /**
-   * Lower-cased names of the classes the run was aimed at (see
-   * `classesUnderTest`). The coverage table leads with these and folds the rest
-   * away. Empty or absent ⇒ nothing to lead with, so every row is shown.
+   * What the run was aimed at, best evidence first (see `resolveTargets`). The
+   * coverage table leads with these and folds the rest away; empty or absent ⇒
+   * nothing to lead with, so every row is shown flat.
    */
-  focus?: string[];
+  targets?: CoverageTarget[];
   infos: CoverageInfo[];
 }

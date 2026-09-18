@@ -14,10 +14,18 @@
  * decides the real source once it knows what the org reported.
  */
 import * as vscode from 'vscode';
-import { findClassDecl, findTestMethods, hasApexTests } from '../salesforce/testMethods';
-import { TestClassEntry } from '../types';
+import {
+  findClassDecl,
+  findTestForTargets,
+  findTestMethods,
+  hasApexTests,
+} from '../salesforce/testMethods';
+import { ApexFileName, TestClassEntry } from '../types';
 
 const APEX_GLOB = '**/*.cls';
+/** Triggers hold no tests, so they are never parsed — but a run covers them and
+ *  the coverage table has to know they exist on disk to open one. */
+const TRIGGER_GLOB = '**/*.trigger';
 const EXCLUDE_GLOB = '**/node_modules/**';
 /** One `readFile` per class with no ceiling means thousands of concurrent reads
  *  and the whole class corpus resident at once. */
@@ -38,7 +46,7 @@ export class LocalTestScanner implements vscode.Disposable {
    *  coverage table asks which measured classes have a file on disk, and the
    *  classes a run measures are the ones UNDER test, so the entries above (test
    *  classes only) can never answer that. */
-  private apexClassNames: string[] = [];
+  private apexClassNames: ApexFileName[] = [];
 
   /** The first full scan, memoised: every caller awaits the same promise. */
   private discovery: Promise<TestClassEntry[]> | undefined;
@@ -49,7 +57,13 @@ export class LocalTestScanner implements vscode.Disposable {
 
   constructor(private readonly output: vscode.OutputChannel) {
     const watcher = vscode.workspace.createFileSystemWatcher(APEX_GLOB);
+    // Triggers are never parsed — they hold no tests — but creating or deleting
+    // one changes which coverage rows have a file to open.
+    const triggers = vscode.workspace.createFileSystemWatcher(TRIGGER_GLOB);
     this.subscriptions.push(
+      triggers,
+      triggers.onDidCreate((uri) => this.addTriggerName(uri)),
+      triggers.onDidDelete((uri) => this.forgetTriggerName(uri)),
       watcher,
       watcher.onDidCreate((uri) => void this.parseFile(uri)),
       watcher.onDidChange((uri) => void this.parseFile(uri)),
@@ -71,8 +85,23 @@ export class LocalTestScanner implements vscode.Disposable {
   /** Every Apex class the workspace holds a `.cls` for, from the last full scan
    *  — not just the test ones. Empty until a scan has run, which the coverage
    *  table reads as "not known yet" rather than "no local source". */
-  localClassNames(): string[] {
+  localClassNames(): ApexFileName[] {
     return [...this.apexClassNames];
+  }
+
+  private addTriggerName(uri: vscode.Uri): void {
+    const name = triggerNameOfUri(uri);
+    if (name === null || this.apexClassNames.some((f) => f.name === name && f.isTrigger)) return;
+    this.apexClassNames.push({ name, isTrigger: true });
+    this.emitter.fire(this.current());
+  }
+
+  private forgetTriggerName(uri: vscode.Uri): void {
+    const name = triggerNameOfUri(uri);
+    if (name === null) return;
+    const before = this.apexClassNames.length;
+    this.apexClassNames = this.apexClassNames.filter((f) => !(f.name === name && f.isTrigger));
+    if (this.apexClassNames.length !== before) this.emitter.fire(this.current());
   }
 
   /**
@@ -100,10 +129,14 @@ export class LocalTestScanner implements vscode.Disposable {
   private async discoverAll(): Promise<TestClassEntry[]> {
     this.scanning = true;
     try {
-      const files = await vscode.workspace.findFiles(APEX_GLOB, EXCLUDE_GLOB);
-      this.apexClassNames = files
-        .map((uri) => classNameOfUri(uri))
-        .filter((name): name is string => name !== null);
+      const [files, triggers] = await Promise.all([
+        vscode.workspace.findFiles(APEX_GLOB, EXCLUDE_GLOB),
+        vscode.workspace.findFiles(TRIGGER_GLOB, EXCLUDE_GLOB),
+      ]);
+      this.apexClassNames = [
+        ...named(files, false),
+        ...named(triggers, true),
+      ];
       for (let i = 0; i < files.length; i += BATCH) {
         await Promise.all(files.slice(i, i + BATCH).map((uri) => this.parseFile(uri)));
       }
@@ -179,6 +212,8 @@ export class LocalTestScanner implements vscode.Disposable {
       classLine: cls.classLine,
       methods: methods.map((m) => ({ name: m.methodName, line: m.line })),
     };
+    const testFor = findTestForTargets(lines);
+    if (testFor.length > 0) entry.testFor = testFor;
     const previous = this.classes.get(cls.className);
     if (!previous || !sameEntry(previous, entry)) changed = true;
     this.classes.set(cls.className, entry);
@@ -217,8 +252,25 @@ export class LocalTestScanner implements vscode.Disposable {
 /** The class a `.cls` file declares, by basename — the same rule the coverage
  *  decorator uses to match an open editor to a measured class. */
 function classNameOfUri(uri: vscode.Uri): string | null {
-  const match = uri.fsPath.match(/([^/\\]+)\.cls$/i);
+  const match = uri.fsPath.match(/([^/\\]+)\.(?:cls|trigger)$/i);
   return match ? match[1] : null;
+}
+
+/** `classNameOfUri` takes either extension, so the trigger watcher needs its own
+ *  guard — a `.cls` must never be recorded as a trigger. */
+function triggerNameOfUri(uri: vscode.Uri): string | null {
+  return /\.trigger$/i.test(uri.fsPath) ? classNameOfUri(uri) : null;
+}
+
+/** Basenames of the files this scan walked, tagged so the coverage table can
+ *  open a trigger as a trigger. */
+function named(uris: vscode.Uri[], isTrigger: boolean): ApexFileName[] {
+  const out: ApexFileName[] = [];
+  for (const uri of uris) {
+    const name = classNameOfUri(uri);
+    if (name !== null) out.push({ name, isTrigger });
+  }
+  return out;
 }
 
 function sameEntry(a: TestClassEntry, b: TestClassEntry): boolean {
@@ -226,6 +278,9 @@ function sameEntry(a: TestClassEntry, b: TestClassEntry): boolean {
     a.name === b.name &&
     a.uri === b.uri &&
     a.classLine === b.classLine &&
+    // Editing only the annotation moves no line, so without this the change
+    // never reaches the index and the Coverage view keeps the stale targets.
+    (a.testFor ?? []).join() === (b.testFor ?? []).join() &&
     a.methods.length === b.methods.length &&
     a.methods.every((m, i) => m.name === b.methods[i].name && m.line === b.methods[i].line)
   );

@@ -50,10 +50,14 @@ const vscodeStub = {
   Uri: { parse: (s: string): FakeUri => fakeUri(pathOf(s)) },
   window: { visibleTextEditors: [] as unknown[] },
   workspace: {
-    findFiles: async (): Promise<FakeUri[]> => {
+    // The real one takes a glob; the scanner now walks classes and triggers in
+    // separate calls, so the fake has to honour it or a trigger would come back
+    // as a class.
+    findFiles: async (glob: string): Promise<FakeUri[]> => {
       findFileCalls++;
       if (findFilesImpl) return findFilesImpl();
-      return [...files.keys()].map(fakeUri);
+      const ext = glob.endsWith('.trigger') ? '.trigger' : '.cls';
+      return [...files.keys()].filter((f) => f.endsWith(ext)).map(fakeUri);
     },
     fs: {
       readFile: async (uri: FakeUri): Promise<Uint8Array> => {
@@ -152,10 +156,11 @@ test('a scan finds test classes and leaves @IsTest helpers out', async () => {
   scanner.dispose();
 });
 
-test('localClassNames reports every .cls, not only the test classes', async () => {
+test('localClassNames reports every .cls and .trigger, not only the test classes', async () => {
   files.set('/acme/classes/AcmeOrderTest.cls', TEST_CLASS);
   files.set('/acme/classes/AcmeTestDataFactory.cls', HELPER_CLASS);
   files.set('/acme/classes/AcmeOrderService.cls', PLAIN_CLASS);
+  files.set('/acme/triggers/AcmeOrderTrigger.trigger', 'trigger AcmeOrderTrigger on Order {}');
 
   const scanner = newScanner();
   // Nothing walked yet: "not known", which the coverage table must not read as
@@ -164,12 +169,25 @@ test('localClassNames reports every .cls, not only the test classes', async () =
 
   await scanner.ensureDiscovered();
   // The class UNDER test is the one coverage is reported for, and it is exactly
-  // the one the test-class entries never mention.
-  assert.deepEqual(scanner.localClassNames().sort(), [
-    'AcmeOrderService',
-    'AcmeOrderTest',
-    'AcmeTestDataFactory',
-  ]);
+  // the one the test-class entries never mention. A run covers triggers too, and
+  // they are tagged so the table opens the right file.
+  assert.deepEqual(
+    scanner
+      .localClassNames()
+      .map((f) => `${f.name}${f.isTrigger ? ' (trigger)' : ''}`)
+      .sort(),
+    [
+      'AcmeOrderService',
+      'AcmeOrderTest',
+      'AcmeOrderTrigger (trigger)',
+      'AcmeTestDataFactory',
+    ],
+  );
+  // A trigger holds no tests, so it must not become an entry.
+  assert.equal(
+    scanner.current().some((e) => e.name === 'AcmeOrderTrigger'),
+    false,
+  );
   scanner.dispose();
 });
 
@@ -178,9 +196,10 @@ test('the first scan is memoised and rescan walks the workspace again', async ()
   const scanner = newScanner();
   await scanner.ensureDiscovered();
   await scanner.ensureDiscovered();
-  assert.equal(findFileCalls, 1);
-  await scanner.rescan();
+  // One walk, two globs: classes and triggers.
   assert.equal(findFileCalls, 2);
+  await scanner.rescan();
+  assert.equal(findFileCalls, 4);
   scanner.dispose();
 });
 
@@ -221,6 +240,29 @@ test('a full scan fires one change event, later edits fire per file', async () =
   await flush();
   assert.equal(fired.length, 2);
   assert.equal(fired[1].length, 3);
+  scanner.dispose();
+});
+
+test('a new trigger becomes openable without a rescan, and is not parsed', async () => {
+  files.set('/acme/classes/AcmeOrderTest.cls', TEST_CLASS);
+  const scanner = newScanner();
+  await scanner.ensureDiscovered();
+
+  files.set('/acme/triggers/AcmeOrderTrigger.trigger', 'trigger AcmeOrderTrigger on Order {}');
+  for (const fn of watcherHandlers.create) fn(fakeUri('/acme/triggers/AcmeOrderTrigger.trigger'));
+  await flush();
+  assert.deepEqual(
+    scanner.localClassNames().filter((f) => f.isTrigger).map((f) => f.name),
+    ['AcmeOrderTrigger'],
+  );
+  // The .cls watcher shares the handler list in this fake; a class must never be
+  // recorded as a trigger.
+  for (const fn of watcherHandlers.create) fn(fakeUri('/acme/classes/AcmeOrderTest.cls'));
+  await flush();
+  assert.deepEqual(
+    scanner.localClassNames().filter((f) => f.isTrigger).map((f) => f.name),
+    ['AcmeOrderTrigger'],
+  );
   scanner.dispose();
 });
 

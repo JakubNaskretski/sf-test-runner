@@ -1,6 +1,12 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { hasApexTests, findClassDecl, findTestMethods, stripComments } from './testMethods';
+import {
+  hasApexTests,
+  findClassDecl,
+  findTestForTargets,
+  findTestMethods,
+  stripComments,
+} from './testMethods';
 
 const CLASS = `@isTest
 public class MyTestClass {
@@ -148,4 +154,28 @@ private class AcmeRefundTest {
   const lines = stripComments(src).split('\n');
   const methods = findTestMethods(lines, 'AcmeRefundTest');
   assert.deepEqual(methods.map((m) => [m.methodName, m.line]), [['testRefund', 6]]);
+});
+
+test('findTestForTargets reads class and method level testFor declarations', () => {
+  const src = [
+    "@IsTest(testFor='ApexClass:OrderService, ApexTrigger:OrderTrigger')",
+    'private class OrderServiceTest {',
+    "  @IsTest(testFor='ApexClass:OrderSelector.selectAll')",
+    '  static void testSelect() {}',
+    '}',
+  ];
+  assert.deepEqual(findTestForTargets(src), [
+    'OrderService',
+    'OrderTrigger',
+    'OrderSelector',
+  ]);
+});
+
+test('findTestForTargets ignores a commented-out declaration and plain @IsTest', () => {
+  const src = [
+    "// @IsTest(testFor='ApexClass:Ghost')",
+    '@IsTest(SeeAllData=true)',
+    'private class OrderServiceTest {}',
+  ];
+  assert.deepEqual(findTestForTargets(src), []);
 });
