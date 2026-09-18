@@ -98,10 +98,18 @@ function header(snapshot: CoverageViewSnapshot): HTMLElement {
   const width = clampPct(
     (targeted > 0 ? snapshot.targetOverall : snapshot.overall) ?? 0,
   );
-  const bar = el('div', { class: 'cov-bar-wrap' }, [
+  // The 75% floor is an ORG-WIDE rule. Marking it against a two-class average
+  // would invite exactly the per-class-vs-org confusion this header exists to
+  // end — a targeted bar can read green while the org is nowhere near it — so
+  // the tick is dimmed and says so whenever the bar is not the whole run.
+  const onTargets = targeted > 0;
+  const floorTitle = onTargets
+    ? `${FLOOR_TITLE} — measured org-wide, not over these classes`
+    : FLOOR_TITLE;
+  const bar = el('div', { class: `cov-bar-wrap${onTargets ? ' scoped' : ''}` }, [
     el('i', { class: `band-${covBand(width)}`, style: `width:${width}%` }),
-    el('span', { class: 'cov-thresh', title: FLOOR_TITLE }),
-    el('span', { class: 'cov-thresh-lbl', title: FLOOR_TITLE, text: '75% deploy floor' }),
+    el('span', { class: 'cov-thresh', title: floorTitle }),
+    el('span', { class: 'cov-thresh-lbl', title: floorTitle, text: '75% org-wide' }),
   ]);
 
   const legend = el('div', {
@@ -112,8 +120,10 @@ function header(snapshot: CoverageViewSnapshot): HTMLElement {
       : targeted > 0
         ? `Whole run: ${snapshot.overall}% across ${classes}. ` +
           'A production deploy is blocked below 75% org-wide.'
-        : `Only the ${classes} the run exercised, averaged by line — not the org's ` +
-          'overall coverage. Worst first; a production deploy is blocked below 75% org-wide.',
+        : `Everything the run touched, averaged by line — not the org's overall ` +
+          'coverage. Nothing said which classes it was aimed at: annotate the test ' +
+          "class with @IsTest(testFor='ApexClass:Foo') and they lead the table. " +
+          'Worst first; a production deploy is blocked below 75% org-wide.',
   });
 
   return el('div', { class: 'cov-overall' }, [title, bar, legend]);

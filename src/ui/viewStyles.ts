@@ -285,6 +285,9 @@ select, input[type="text"] {
 }
 .cov-bar-wrap i { display: block; height: 100%; border-radius: 2px; }
 .cov-thresh { position: absolute; top: -3px; bottom: -3px; left: 75%; width: 2px; background: var(--sfr-fg); opacity: .75; }
+/* Dimmed when the bar measures the targets: the floor is an org-wide rule. */
+.cov-bar-wrap.scoped .cov-thresh { opacity: .3; }
+.cov-bar-wrap.scoped .cov-thresh-lbl { opacity: .55; }
 .cov-thresh-lbl {
   position: absolute; left: 75%; top: 12px; transform: translateX(-50%);
   font-size: 9.5px; color: var(--sfr-muted); white-space: nowrap;

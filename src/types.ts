@@ -1,5 +1,3 @@
-import type { CoverageTarget } from './ui/coverageTargets';
-
 export interface OrgInfo {
   alias: string;
   username: string;
@@ -32,6 +30,22 @@ export interface TestRunSummary {
   skipped: number;
   testTotalTime: number;
   results: TestMethodResult[];
+}
+
+/** How well we know that a run was aimed at a class: `declared` is the `testFor`
+ *  annotation, the other two are inference from the name. */
+export type TargetTier = 'declared' | 'named' | 'truncated';
+
+export interface CoverageTarget {
+  /** Class or trigger name, spelled as the coverage row spells it where there
+   *  is one, otherwise as the annotation declared it. */
+  name: string;
+  tier: TargetTier;
+  /** The test classes that pointed here, for the row's tooltip. */
+  by: string[];
+  /** Declared by an annotation, but the run never exercised it — a stale
+   *  `testFor` is worth showing, not hiding. */
+  unexercised?: boolean;
 }
 
 /** An Apex file the workspace scan walked: its basename and which kind it is. */

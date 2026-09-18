@@ -14,21 +14,8 @@
  *
  * No `vscode` import: the same no-host rule as `coverageRows`.
  */
+import type { CoverageTarget, TargetTier } from '../types';
 import { classesUnderTest } from './coverageRows';
-
-export type TargetTier = 'declared' | 'named' | 'truncated';
-
-export interface CoverageTarget {
-  /** Class or trigger name, spelled as the coverage row spells it where there
-   *  is one, otherwise as the annotation declared it. */
-  name: string;
-  tier: TargetTier;
-  /** The test classes that pointed here, for the row's tooltip. */
-  by: string[];
-  /** Declared by an annotation, but the run never exercised it — a stale
-   *  `testFor` is worth showing, not hiding. */
-  unexercised?: boolean;
-}
 
 /**
  * An Apex class name caps at 40 characters, so a class whose own name is longer
