@@ -2,6 +2,13 @@
 
 All notable changes to the "sf-test-runner" extension are documented here.
 
+## [0.12.0] - 2026-09-18
+
+- **Coverage leads with the classes the run was actually about.** A run reports every class its tests touched, so one test class could bury the class you cared about under forty others and the headline percentage averaged the lot. The view now resolves what each test class was aimed at and leads with those, grouped by how well it knows: **Declared** from Salesforce's `@IsTest(testFor='ApexClass:Foo')` annotation (API v66+, and it names triggers just as well), **By name** from the `FooTest`/`TestFoo`/`Foo_Test`/`FooTests` conventions — accepted only when that class really was covered — and **By truncated name** for a class whose name is too long to have a conventional test class, matched on a prefix and declining whenever two candidates fit. Each row's tooltip names the test classes that pointed at it.
+- The headline and the bar now measure those targeted classes; the whole-run average moves to the legend. A class a `testFor` declares but the run never reached is shown as **not exercised** rather than dropped. Everything else the run touched folds into **Also covered**, collapsed, with the lowest percentage on the summary line. A run with nothing identifiable falls back to the flat worst-first table.
+- **Triggers are first-class in coverage.** The workspace scan walks `.trigger` files, so a covered trigger stops reporting "no local source" and opens its own file.
+- The output channel no longer steals focus when a run starts — the Results view already shows it live. `sfTestRunner.autoShowOutput` now defaults off; set it to `true` for the old behaviour.
+
 ## [0.11.0] - 2026-09-18
 
 - **A tidier Tests view.** The org dropdown no longer carries a separate kind badge — the DEV/SBX/PROD/SCR tag is on the option itself, and a production org still gets its warning bar. Rescan and Fetch org tests now split the toolbar row evenly, and the action area is two rows: **Select tests for active class** with the "with coverage" checkbox, then **Run Selected**, **All Local** and **All in Org** as one full-width run row. The ⋯ menu is gone — Run all tests in org is a plain button and Load recent run stays in the view title. The selection count moved up beside the class and test counts.
