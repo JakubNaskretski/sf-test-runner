@@ -64,7 +64,7 @@ button { font-family: inherit; }
   display: flex; flex-direction: column; gap: 6px;
 }
 .tb-row { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
-.tb-row.acts > button { flex: 1 1 0; min-width: 0; white-space: nowrap; }
+.tb-row.acts > button { flex: 1 1 0; min-width: max-content; white-space: nowrap; }
 .tb-row .stamp { flex-basis: 100%; }
 .tb-row .stamp:empty { display: none; }
 .tb-row .lbl { color: var(--sfr-muted); flex: none; }
@@ -129,8 +129,10 @@ select, input[type="text"] {
   display: flex; flex-direction: column; gap: 5px;
 }
 .filters input[type="text"] { width: 100%; }
-.filters .frow { display: flex; align-items: center; gap: 6px; }
-.filters select { flex: 1; }
+.filters .frow { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+/* A floor, and a row that wraps: the counts beside it never shrink, so without
+ * this the select absorbed every shortfall and became an arrow stub. */
+.filters select { flex: 1 1 120px; min-width: 120px; }
 
 .filter-row {
   padding: 3px 10px 5px; display: flex; gap: 10px; font-size: 11px; flex: none;

@@ -112,8 +112,11 @@ export function classesUnderTest(testClasses: Iterable<string>): Set<string> {
   const out = new Set<string>();
   for (const raw of testClasses) {
     const name = raw.trim();
-    const suffix = /^(.+?)_?Tests?$/i.exec(name);
-    const prefix = suffix ? null : /^Tests?(.+)$/i.exec(name);
+    // Case-SENSITIVE on the marker, deliberately: the conventions capitalise it,
+    // and matching `test` would turn `Contest` into `con` and `Latest` into `la`.
+    const suffix = /^(.+?)_*Tests?$/.exec(name);
+    // The prefix form needs a class-shaped remainder, or `Tester` yields `er`.
+    const prefix = suffix ? null : /^Tests?_*([A-Z].*)$/.exec(name);
     const base = suffix?.[1] ?? prefix?.[1];
     if (base) out.add(base.toLowerCase());
   }

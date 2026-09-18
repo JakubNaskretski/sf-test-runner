@@ -141,3 +141,11 @@ test('classesUnderTest inverts the four test-naming conventions', () => {
 test('classesUnderTest ignores a test class that matches no convention', () => {
   assert.deepEqual([...classesUnderTest(['NightlyScenarios', ''])], []);
 });
+
+test('classesUnderTest does not mistake an ordinary word ending in "test"', () => {
+  assert.deepEqual([...classesUnderTest(['Contest', 'Latest', 'Tester', 'Test', 'Tests'])], []);
+});
+
+test('classesUnderTest tolerates the underscore spellings', () => {
+  assert.deepEqual([...classesUnderTest(['Foo__Test', 'Test_Bar'])].sort(), ['bar', 'foo']);
+});

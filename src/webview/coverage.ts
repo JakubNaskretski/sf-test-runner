@@ -19,6 +19,9 @@ const FILTER_FROM = 20;
 interface LocalState {
   q: string;
   scroll: number;
+  /** Whether the "also covered" fold is open; `render()` rebuilds the table on
+   *  every state post, and without this a prefs tick would snap it shut. */
+  fold: boolean;
 }
 
 const api = vscodeApi();
@@ -35,6 +38,7 @@ function normalizeLocal(stored: LocalState | undefined): LocalState {
   return {
     q: typeof stored?.q === 'string' ? stored.q : '',
     scroll: typeof stored?.scroll === 'number' && stored.scroll >= 0 ? stored.scroll : 0,
+    fold: stored?.fold === true,
   };
 }
 
@@ -222,16 +226,25 @@ function fillTable(): void {
       ...(count === 0
         ? []
         : [
-            el('details', { class: 'cov-rest' }, [
-              el('summary', {
-                text: `Also covered by this run · ${count} ${count === 1 ? 'class' : 'classes'}`,
-              }),
-              ...rest.map(rowEl),
-            ]),
+            fold(count, rest),
           ]),
     );
   }
   table.scrollTop = local.scroll;
+}
+
+/** The collapsed remainder of the table, its open state remembered. */
+function fold(count: number, rest: CoverageRow[]): HTMLElement {
+  const node = el('details', { class: 'cov-rest' }, [
+    el('summary', { text: `Also covered · ${count} ${count === 1 ? 'class' : 'classes'}` }),
+    ...rest.map(rowEl),
+  ]) as HTMLDetailsElement;
+  node.open = local.fold;
+  node.addEventListener('toggle', () => {
+    local.fold = node.open;
+    saveLocal();
+  });
+  return node;
 }
 
 function render(): void {
