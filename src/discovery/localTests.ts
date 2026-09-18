@@ -57,7 +57,13 @@ export class LocalTestScanner implements vscode.Disposable {
 
   constructor(private readonly output: vscode.OutputChannel) {
     const watcher = vscode.workspace.createFileSystemWatcher(APEX_GLOB);
+    // Triggers are never parsed — they hold no tests — but creating or deleting
+    // one changes which coverage rows have a file to open.
+    const triggers = vscode.workspace.createFileSystemWatcher(TRIGGER_GLOB);
     this.subscriptions.push(
+      triggers,
+      triggers.onDidCreate((uri) => this.addTriggerName(uri)),
+      triggers.onDidDelete((uri) => this.forgetTriggerName(uri)),
       watcher,
       watcher.onDidCreate((uri) => void this.parseFile(uri)),
       watcher.onDidChange((uri) => void this.parseFile(uri)),
@@ -81,6 +87,21 @@ export class LocalTestScanner implements vscode.Disposable {
    *  table reads as "not known yet" rather than "no local source". */
   localClassNames(): ApexFileName[] {
     return [...this.apexClassNames];
+  }
+
+  private addTriggerName(uri: vscode.Uri): void {
+    const name = triggerNameOfUri(uri);
+    if (name === null || this.apexClassNames.some((f) => f.name === name && f.isTrigger)) return;
+    this.apexClassNames.push({ name, isTrigger: true });
+    this.emitter.fire(this.current());
+  }
+
+  private forgetTriggerName(uri: vscode.Uri): void {
+    const name = triggerNameOfUri(uri);
+    if (name === null) return;
+    const before = this.apexClassNames.length;
+    this.apexClassNames = this.apexClassNames.filter((f) => !(f.name === name && f.isTrigger));
+    if (this.apexClassNames.length !== before) this.emitter.fire(this.current());
   }
 
   /**
@@ -235,6 +256,12 @@ function classNameOfUri(uri: vscode.Uri): string | null {
   return match ? match[1] : null;
 }
 
+/** `classNameOfUri` takes either extension, so the trigger watcher needs its own
+ *  guard — a `.cls` must never be recorded as a trigger. */
+function triggerNameOfUri(uri: vscode.Uri): string | null {
+  return /\.trigger$/i.test(uri.fsPath) ? classNameOfUri(uri) : null;
+}
+
 /** Basenames of the files this scan walked, tagged so the coverage table can
  *  open a trigger as a trigger. */
 function named(uris: vscode.Uri[], isTrigger: boolean): ApexFileName[] {
@@ -251,6 +278,9 @@ function sameEntry(a: TestClassEntry, b: TestClassEntry): boolean {
     a.name === b.name &&
     a.uri === b.uri &&
     a.classLine === b.classLine &&
+    // Editing only the annotation moves no line, so without this the change
+    // never reaches the index and the Coverage view keeps the stale targets.
+    (a.testFor ?? []).join() === (b.testFor ?? []).join() &&
     a.methods.length === b.methods.length &&
     a.methods.every((m, i) => m.name === b.methods[i].name && m.line === b.methods[i].line)
   );

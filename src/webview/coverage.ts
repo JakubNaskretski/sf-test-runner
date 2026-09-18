@@ -58,7 +58,9 @@ function timeOf(at: number): string {
 }
 
 function header(snapshot: CoverageViewSnapshot): HTMLElement {
-  const count = snapshot.rows.length;
+  // Synthesized "not exercised" rows have no lines, so they must not be counted
+  // against `overall`, which is computed over the measured classes only.
+  const count = snapshot.rows.filter((r) => !r.unexercised).length;
   const classes = `${count} ${count === 1 ? 'class' : 'classes'}`;
   const fromRun = snapshot.scope !== 'org';
   const source =
@@ -72,9 +74,14 @@ function header(snapshot: CoverageViewSnapshot): HTMLElement {
   // nobody was asking about. Say where the number is from before saying what it
   // is, too — an unqualified percentage reads as the org's official coverage,
   // which none of these are.
-  const targeted = snapshot.rows.filter((r) => r.target && !r.unexercised).length;
+  // A target whose classes have no measurable lines at all leaves `targetOverall`
+  // null; there is no headline to make from that, so fall back to the run.
+  const targeted =
+    snapshot.targetOverall === null
+      ? 0
+      : snapshot.rows.filter((r) => r.target && !r.unexercised).length;
   const headline =
-    snapshot.targetOverall !== null && targeted > 0
+    targeted > 0
       ? `targets ${snapshot.targetOverall}%` +
         (targeted === 1 ? '' : ` across ${targeted} classes`)
       : snapshot.overall === null

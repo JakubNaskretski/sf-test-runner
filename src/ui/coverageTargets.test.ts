@@ -56,6 +56,28 @@ test('the truncated tier will not guess at a class that could have been named pr
   assert.deepEqual(resolveTargets(['ShortlistBuilderTest'], none, ['ShortlistBuilderX']), []);
 });
 
+test('an ordinary test class name is never treated as truncated', () => {
+  // `AccountServiceTest` fits in 40 characters, so nothing about it was chopped
+  // — its real target simply was not in this run, and a long class sharing the
+  // prefix must not be promoted in its place.
+  assert.deepEqual(
+    resolveTargets(['AccountServiceTest'], none, ['AccountServiceLegacyBatchSchedulerImpl']),
+    [],
+  );
+});
+
+test('a declaration upgrades a target another test class only guessed at', () => {
+  const targets = resolveTargets(
+    ['OrderServiceTest', 'BillingFlowTest'],
+    (t) => (t === 'BillingFlowTest' ? ['OrderService'] : []),
+    ['OrderService'],
+  );
+  assert.deepEqual(
+    targets.map((t) => [t.tier, t.by.join(',')]),
+    [['declared', 'OrderServiceTest,BillingFlowTest']],
+  );
+});
+
 test('two test classes pointing at one class are both credited', () => {
   const targets = resolveTargets(
     ['OrderServiceTest', 'OrderFlowTest'],

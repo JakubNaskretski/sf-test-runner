@@ -64,13 +64,14 @@ export function rowsFor(
 ): CoverageRow[] {
   const rows = infos.map((info): CoverageRow => {
     const total = totalLinesOf(info);
+    const hit = target(info.className);
     return {
       className: info.className,
       pct: pctOf(info),
       covered: info.numLinesCovered,
       total,
       hasSource: hasSource(info.className),
-      ...(target(info.className) ? { target: target(info.className) } : {}),
+      ...(hit ? { target: hit } : {}),
       // Set by the caller that knows the workspace; a name alone cannot say.
       isTrigger: false,
     };

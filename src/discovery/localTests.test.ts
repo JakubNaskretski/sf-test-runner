@@ -243,6 +243,29 @@ test('a full scan fires one change event, later edits fire per file', async () =
   scanner.dispose();
 });
 
+test('a new trigger becomes openable without a rescan, and is not parsed', async () => {
+  files.set('/acme/classes/AcmeOrderTest.cls', TEST_CLASS);
+  const scanner = newScanner();
+  await scanner.ensureDiscovered();
+
+  files.set('/acme/triggers/AcmeOrderTrigger.trigger', 'trigger AcmeOrderTrigger on Order {}');
+  for (const fn of watcherHandlers.create) fn(fakeUri('/acme/triggers/AcmeOrderTrigger.trigger'));
+  await flush();
+  assert.deepEqual(
+    scanner.localClassNames().filter((f) => f.isTrigger).map((f) => f.name),
+    ['AcmeOrderTrigger'],
+  );
+  // The .cls watcher shares the handler list in this fake; a class must never be
+  // recorded as a trigger.
+  for (const fn of watcherHandlers.create) fn(fakeUri('/acme/classes/AcmeOrderTest.cls'));
+  await flush();
+  assert.deepEqual(
+    scanner.localClassNames().filter((f) => f.isTrigger).map((f) => f.name),
+    ['AcmeOrderTrigger'],
+  );
+  scanner.dispose();
+});
+
 test('re-parsing an unchanged file does not fire', async () => {
   files.set('/acme/classes/AcmeOrderTest.cls', TEST_CLASS);
   const scanner = newScanner();

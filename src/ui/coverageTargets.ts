@@ -31,14 +31,23 @@ export interface CoverageTarget {
 }
 
 /**
- * An Apex class name caps at 40 characters, so a class whose own name is long
- * enough cannot have a conventionally named test class: `Test` is four more.
- * Only those rows are eligible for the truncated tier — a class that could have
- * been named properly is never guessed at.
+ * An Apex class name caps at 40 characters, so a class whose own name is longer
+ * than this cannot have a conventionally named test class: `Test` is four more.
+ * Only those rows are eligible for the truncated tier.
  */
 const LONGEST_CONVENTIONAL = 36;
+/**
+ * And the tier is only ATTEMPTED for a test class at the cap, which is what
+ * says the name was chopped in the first place. Without this an ordinary
+ * `AccountServiceTest` whose own class is absent from the run would happily
+ * promote whichever long class happens to share its prefix.
+ */
+const TRUNCATED_NAME = 39;
 /** Below this many characters a stem is too generic to identify anything. */
 const MIN_STEM = 10;
+
+/** Evidence strength, so a later declaration can upgrade an earlier guess. */
+const RANK: Record<TargetTier, number> = { truncated: 0, named: 1, declared: 2 };
 
 export function resolveTargets(
   ranTestClasses: Iterable<string>,
@@ -54,6 +63,12 @@ export function resolveTargets(
     const existing = found.get(key);
     if (existing) {
       if (!existing.by.includes(by)) existing.by.push(by);
+      // Better evidence wins whenever it turns up, or the tier would depend on
+      // the order the CLI happened to report the test classes in.
+      if (RANK[tier] > RANK[existing.tier]) {
+        existing.tier = tier;
+        delete existing.unexercised;
+      }
       return;
     }
     found.set(key, { name, tier, by: [by], ...(unexercised ? { unexercised } : {}) });
@@ -98,10 +113,11 @@ export function resolveTargets(
  * table's secondary band.
  */
 function truncatedMatch(testClass: string, covered: Map<string, string>): string | undefined {
+  if (testClass.length < TRUNCATED_NAME) return undefined;
   const [base] = classesUnderTest([testClass]);
-  // No marker at all AND long enough that the marker itself was chopped off.
-  const stem = base ?? (testClass.length >= 39 ? testClass.toLowerCase() : undefined);
-  if (!stem || stem.length < MIN_STEM) return undefined;
+  // No marker survives when the marker itself was the part that got chopped.
+  const stem = base ?? testClass.toLowerCase();
+  if (stem.length < MIN_STEM) return undefined;
 
   let best: { name: string; score: number } | undefined;
   let tied = false;
