@@ -297,6 +297,7 @@ export class PanelState implements vscode.Disposable {
     if (!snapshot) return { snapshot: undefined, paint: this.paintCoverage };
     let covered = 0;
     let total = 0;
+    const focus = new Set(snapshot.focus ?? []);
     const rows: CoverageRow[] = snapshot.infos.map((info) => {
       const lines = info.numLinesCovered + info.numLinesUncovered;
       covered += info.numLinesCovered;
@@ -309,6 +310,7 @@ export class PanelState implements vscode.Disposable {
         // Nothing known about local files yet ⇒ assume the row can be opened;
         // the open handler reports it if the file really is missing.
         hasSource: this._localClassNames.size === 0 || this._localClassNames.has(info.className),
+        focus: focus.has(info.className.toLowerCase()),
       };
     });
     rows.sort((a, b) => a.pct - b.pct || a.className.localeCompare(b.className));

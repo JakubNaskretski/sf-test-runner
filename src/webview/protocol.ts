@@ -133,6 +133,8 @@ export interface CoverageRow {
   total: number;
   /** False for a class with no local file — the row is greyed and does not open. */
   hasSource: boolean;
+  /** True for a class the run was aimed at; those rows lead the table. */
+  focus: boolean;
 }
 
 /** The view's flattened read of a `CoverageSnapshot` (src/types.ts). */

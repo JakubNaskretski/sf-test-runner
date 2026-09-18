@@ -54,10 +54,13 @@ export function pctOf(info: CoverageInfo): number {
  *
  * @param hasSource decides the greyed "no local source" rows — a class the org
  *                  measured but the workspace does not have cannot be opened.
+ * @param focus lower-cased names of the classes the run was aimed at (see
+ *              {@link classesUnderTest}); those rows lead the table.
  */
 export function rowsFor(
   infos: CoverageInfo[],
   hasSource: (className: string) => boolean,
+  focus: ReadonlySet<string> = new Set(),
 ): CoverageRow[] {
   const rows = infos.map((info): CoverageRow => {
     const total = totalLinesOf(info);
@@ -67,6 +70,7 @@ export function rowsFor(
       covered: info.numLinesCovered,
       total,
       hasSource: hasSource(info.className),
+      focus: focus.has(info.className.toLowerCase()),
     };
   });
   rows.sort((a, b) => a.pct - b.pct || a.className.localeCompare(b.className));
@@ -90,5 +94,28 @@ export function overallOf(infos: CoverageInfo[]): number | null {
 export function indexByClassName(infos: CoverageInfo[]): Map<string, CoverageInfo> {
   const out = new Map<string, CoverageInfo>();
   for (const info of infos) out.set(info.className.toLowerCase(), info);
+  return out;
+}
+
+/**
+ * The classes a run's test classes are named FOR — the inverse of the four
+ * conventions `activeFileTests` uses (`FooTest`, `TestFoo`, `Foo_Test`,
+ * `FooTests`). Running `FooTest` is nearly always a question about `Foo`'s
+ * coverage, so the table leads with those rows and folds away everything else
+ * the run happened to touch.
+ *
+ * Names come back lower-cased: Apex is case-insensitive about class names, so
+ * callers must compare that way too. A test class that matches no convention
+ * contributes nothing — the table then falls back to showing every row.
+ */
+export function classesUnderTest(testClasses: Iterable<string>): Set<string> {
+  const out = new Set<string>();
+  for (const raw of testClasses) {
+    const name = raw.trim();
+    const suffix = /^(.+?)_?Tests?$/i.exec(name);
+    const prefix = suffix ? null : /^Tests?(.+)$/i.exec(name);
+    const base = suffix?.[1] ?? prefix?.[1];
+    if (base) out.add(base.toLowerCase());
+  }
   return out;
 }

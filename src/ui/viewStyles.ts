@@ -194,6 +194,12 @@ select, input[type="text"] {
 .cov-chip.on { color: var(--sfr-fg); border-color: var(--sfr-btn-bg); background: var(--sfr-sel); }
 .cov-chip input { margin: 0; width: 12px; height: 12px; accent-color: var(--sfr-btn-bg); }
 
+.cov-rest > summary {
+  cursor: pointer; font-size: 11px; color: var(--sfr-muted);
+  padding: 4px 10px; user-select: none;
+}
+.cov-rest > summary:hover { color: var(--sfr-fg); }
+
 /* ------------------------------ progress ------------------------------- */
 .progress { flex: none; padding: 7px 10px; border-bottom: 1px solid var(--sfr-border); }
 .progress .ptext { font-size: 12px; display: flex; align-items: center; gap: 6px; }

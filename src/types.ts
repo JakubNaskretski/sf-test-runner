@@ -125,5 +125,11 @@ export interface CoverageSnapshot {
   orgUsername: string;
   at: number;
   runId?: string;
+  /**
+   * Lower-cased names of the classes the run was aimed at (see
+   * `classesUnderTest`). The coverage table leads with these and folds the rest
+   * away. Empty or absent ⇒ nothing to lead with, so every row is shown.
+   */
+  focus?: string[];
   infos: CoverageInfo[];
 }

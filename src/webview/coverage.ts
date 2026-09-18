@@ -201,7 +201,30 @@ function fillTable(): void {
     );
     return;
   }
-  table.replaceChildren(...shown.map(rowEl));
+  // Lead with the classes the run was aimed at. Everything else it happened to
+  // touch folds away: after running one test class, its class is the answer and
+  // the other forty are noise. A filter query searches the whole table, so it
+  // renders flat — hiding matches inside a closed fold would look like no match.
+  const lead = query ? [] : shown.filter((r) => r.focus);
+  const rest = query ? shown : shown.filter((r) => !r.focus);
+  if (lead.length === 0) {
+    table.replaceChildren(...rest.map(rowEl));
+  } else {
+    const count = rest.length;
+    table.replaceChildren(
+      ...lead.map(rowEl),
+      ...(count === 0
+        ? []
+        : [
+            el('details', { class: 'cov-rest' }, [
+              el('summary', {
+                text: `Also covered by this run · ${count} ${count === 1 ? 'class' : 'classes'}`,
+              }),
+              ...rest.map(rowEl),
+            ]),
+          ]),
+    );
+  }
   table.scrollTop = local.scroll;
 }
 
