@@ -46,9 +46,18 @@ test('a truncated test class name resolves to the long class it was chopped from
 });
 
 test('the truncated tier declines a tie rather than guessing', () => {
-  const a = 'AccountRelationshipRollupServiceHandler';
-  const b = 'AccountRelationshipRollupServiceListener';
-  assert.deepEqual(resolveTargets(['AccountRelationshipRollupServiceTest'], none, [a, b]), []);
+  // 35 characters, so the test class below is 39 and clears the length gate —
+  // this has to reach the tie branch, not short-circuit before it.
+  const stem = 'AccountRelationshipRollupSvcHandler';
+  const testClass = `${stem}Test`;
+  const one = `${stem}One`;
+  const two = `${stem}Two`;
+  // One candidate: resolved. Two that the stem cannot choose between: declined.
+  assert.deepEqual(
+    resolveTargets([testClass], none, [one]).map((t) => [t.name, t.tier]),
+    [[one, 'truncated']],
+  );
+  assert.deepEqual(resolveTargets([testClass], none, [one, two]), []);
 });
 
 test('the truncated tier will not guess at a class that could have been named properly', () => {
