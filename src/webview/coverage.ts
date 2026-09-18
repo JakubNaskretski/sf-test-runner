@@ -19,6 +19,9 @@ const FILTER_FROM = 20;
 interface LocalState {
   q: string;
   scroll: number;
+  /** Whether the "also covered" fold is open; `render()` rebuilds the table on
+   *  every state post, and without this a prefs tick would snap it shut. */
+  fold: boolean;
 }
 
 const api = vscodeApi();
@@ -35,6 +38,7 @@ function normalizeLocal(stored: LocalState | undefined): LocalState {
   return {
     q: typeof stored?.q === 'string' ? stored.q : '',
     scroll: typeof stored?.scroll === 'number' && stored.scroll >= 0 ? stored.scroll : 0,
+    fold: stored?.fold === true,
   };
 }
 
@@ -55,10 +59,26 @@ function timeOf(at: number): string {
 
 function header(snapshot: CoverageViewSnapshot): HTMLElement {
   const count = snapshot.rows.length;
-  const overallText = snapshot.overall === null ? 'no line data' : `${snapshot.overall}% overall`;
+  const classes = `${count} ${count === 1 ? 'class' : 'classes'}`;
+  const fromRun = snapshot.scope !== 'org';
+  const source =
+    snapshot.scope === 'run'
+      ? 'From this run'
+      : snapshot.scope === 'loaded'
+        ? 'From the run you loaded'
+        : 'Stored in the org';
+  const overallText =
+    snapshot.overall === null
+      ? 'no line data'
+      : count === 1
+        ? `${snapshot.overall}%`
+        : `${snapshot.overall}% across ${classes}`;
+  // Say where the number is from before saying what it is. An unqualified
+  // percentage reads as the org's official coverage; this is either what one
+  // run measured or one class's stored aggregate, and never the whole org.
   const title = el('div', {
     class: 'cov-title',
-    text: `Coverage · ${overallText} · ${count} ${count === 1 ? 'class' : 'classes'} · ${snapshot.label}`,
+    text: `${source} · ${overallText}`,
     title: `${snapshot.label} · ${snapshot.orgUsername} · ${timeOf(snapshot.at)}`,
   });
 
@@ -71,7 +91,11 @@ function header(snapshot: CoverageViewSnapshot): HTMLElement {
 
   const legend = el('div', {
     class: 'cov-legend',
-    text: 'Worst first. A production deploy is blocked below 75% org-wide.',
+    text: fromRun
+      ? `Only the ${classes} the run exercised, averaged by line — not the org's ` +
+        'overall coverage. Worst first; a production deploy is blocked below 75% org-wide.'
+      : "One class, from whichever run last covered it in the org — any user's, not " +
+        'necessarily yours. A production deploy is blocked below 75% org-wide.',
   });
 
   return el('div', { class: 'cov-overall' }, [title, bar, legend]);
@@ -187,8 +211,40 @@ function fillTable(): void {
     );
     return;
   }
-  table.replaceChildren(...shown.map(rowEl));
+  // Lead with the classes the run was aimed at. Everything else it happened to
+  // touch folds away: after running one test class, its class is the answer and
+  // the other forty are noise. A filter query searches the whole table, so it
+  // renders flat — hiding matches inside a closed fold would look like no match.
+  const lead = query ? [] : shown.filter((r) => r.focus);
+  const rest = query ? shown : shown.filter((r) => !r.focus);
+  if (lead.length === 0) {
+    table.replaceChildren(...rest.map(rowEl));
+  } else {
+    const count = rest.length;
+    table.replaceChildren(
+      ...lead.map(rowEl),
+      ...(count === 0
+        ? []
+        : [
+            fold(count, rest),
+          ]),
+    );
+  }
   table.scrollTop = local.scroll;
+}
+
+/** The collapsed remainder of the table, its open state remembered. */
+function fold(count: number, rest: CoverageRow[]): HTMLElement {
+  const node = el('details', { class: 'cov-rest' }, [
+    el('summary', { text: `Also covered · ${count} ${count === 1 ? 'class' : 'classes'}` }),
+    ...rest.map(rowEl),
+  ]) as HTMLDetailsElement;
+  node.open = local.fold;
+  node.addEventListener('toggle', () => {
+    local.fold = node.open;
+    saveLocal();
+  });
+  return node;
 }
 
 function render(): void {

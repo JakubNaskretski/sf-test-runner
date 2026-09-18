@@ -37,6 +37,7 @@ import {
   TestMethodResult,
   TestRunSummary,
 } from '../types';
+import { classesUnderTest } from '../ui/coverageRows';
 import { ApexFileResolver } from '../ui/openApex';
 import { PanelState } from '../ui/panelState';
 import type { OutcomeKind } from '../webview/protocol';
@@ -376,6 +377,7 @@ export class TestRunner implements vscode.Disposable {
           }
           this.deps.state.setCoverage({
             label: `${name} · org's last run (any user)`,
+            scope: 'org',
             orgUsername: org.username,
             at: Date.now(),
             infos: [info],
@@ -544,7 +546,13 @@ export class TestRunner implements vscode.Disposable {
         testRunId: result.summary.asyncApexJobId ?? testRunId,
       });
       if (coverage) {
-        this.publishCoverage(org, result.coverage, result.summary.asyncApexJobId ?? testRunId);
+        this.publishCoverage(
+          org,
+          result.coverage,
+          result.summary.asyncApexJobId ?? testRunId,
+          result.summary.results.map((r) => r.className),
+          'run',
+        );
       }
       this.logSummary(result.summary, org.username, result.coverage);
     } catch (err) {
@@ -598,7 +606,13 @@ export class TestRunner implements vscode.Disposable {
       summary,
       testRunId: recent.testRunId,
     });
-    this.publishCoverage(org, coverage, recent.testRunId);
+    this.publishCoverage(
+      org,
+      coverage,
+      recent.testRunId,
+      summary.results.map((r) => r.className),
+      'loaded',
+    );
     this.logSummary(summary, org.username, coverage);
   }
 
@@ -616,6 +630,8 @@ export class TestRunner implements vscode.Disposable {
     org: OrgInfo,
     coverage: Map<string, CoverageInfo>,
     runId: string,
+    ranTestClasses: Iterable<string>,
+    scope: 'run' | 'loaded',
   ): void {
     const infos = [...coverage.values()];
     if (infos.length === 0) {
@@ -629,9 +645,11 @@ export class TestRunner implements vscode.Disposable {
     }
     this.deps.state.setCoverage({
       label: `run ${runId} on ${org.alias}`,
+      scope,
       orgUsername: org.username,
       at: Date.now(),
       runId,
+      focus: [...classesUnderTest(ranTestClasses)],
       infos,
     });
   }

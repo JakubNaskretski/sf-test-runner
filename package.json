@@ -2,7 +2,7 @@
   "name": "sf-test-runner",
   "displayName": "Salesforce Test Runner",
   "description": "Run Apex tests from a sidebar panel: pick the target org, tick classes and methods across local and org tests, read parsed results with clickable failures, and see coverage in the Coverage view and painted on your editor lines. Every sf CLI command we execute is listed in a collapsible log. Reuses your existing sf CLI auth.",
-  "version": "0.10.0",
+  "version": "0.11.0",
   "publisher": "Skrety",
   "icon": "icons/plugin-icon.png",
   "license": "MIT",
@@ -34,117 +34,141 @@
     "commands": [
       {
         "command": "sfTestRunner.runSelected",
-        "title": "SF Tests: Run Selected Tests",
+        "category": "SF Tests",
+        "title": "Run Selected Tests",
         "icon": "$(run)"
       },
       {
         "command": "sfTestRunner.runAllLocal",
-        "title": "SF Tests: Run All Local Tests",
+        "category": "SF Tests",
+        "title": "Run All Local Tests",
         "icon": "$(run-all)"
       },
       {
         "command": "sfTestRunner.runAllInOrg",
-        "title": "SF Tests: Run All Tests in Org (incl. managed)"
+        "category": "SF Tests",
+        "title": "Run All Tests in Org (incl. managed)"
       },
       {
         "command": "sfTestRunner.cancelRun",
-        "title": "SF Tests: Cancel Test Run",
+        "category": "SF Tests",
+        "title": "Cancel Test Run",
         "icon": "$(stop-circle)"
       },
       {
         "command": "sfTestRunner.rescan",
-        "title": "SF Tests: Rescan Workspace for Tests",
+        "category": "SF Tests",
+        "title": "Rescan Workspace for Tests",
         "icon": "$(refresh)"
       },
       {
         "command": "sfTestRunner.fetchOrgTests",
-        "title": "SF Tests: Fetch Test Classes from Org",
+        "category": "SF Tests",
+        "title": "Fetch Test Classes from Org",
         "icon": "$(cloud-download)"
       },
       {
         "command": "sfTestRunner.selectOrg",
-        "title": "SF Tests: Select Target Org",
+        "category": "SF Tests",
+        "title": "Select Target Org",
         "icon": "$(plug)"
       },
       {
         "command": "sfTestRunner.refreshOrgs",
-        "title": "SF Tests: Refresh Org List"
+        "category": "SF Tests",
+        "title": "Refresh Org List"
       },
       {
         "command": "sfTestRunner.loginOrg",
-        "title": "SF Tests: Log In to an Org",
+        "category": "SF Tests",
+        "title": "Log In to an Org",
         "icon": "$(add)"
       },
       {
         "command": "sfTestRunner.testsForActiveFile",
-        "title": "SF Tests: Select Tests for Active File"
+        "category": "SF Tests",
+        "title": "Select Tests for Active Class"
       },
       {
         "command": "sfTestRunner.rerunFailed",
-        "title": "SF Tests: Re-run Failed Tests",
+        "category": "SF Tests",
+        "title": "Re-run Failed Tests",
         "icon": "$(debug-rerun)"
       },
       {
         "command": "sfTestRunner.copySummary",
-        "title": "SF Tests: Copy Run Summary",
+        "category": "SF Tests",
+        "title": "Copy Run Summary",
         "icon": "$(copy)"
       },
       {
         "command": "sfTestRunner.loadRecentRuns",
-        "title": "SF Tests: Load Recent Test Runs",
+        "category": "SF Tests",
+        "title": "Load Recent Test Runs",
         "icon": "$(history)"
       },
       {
         "command": "sfTestRunner.expandResults",
-        "title": "SF Tests: Expand All Results",
+        "category": "SF Tests",
+        "title": "Expand All Results",
         "icon": "$(expand-all)"
       },
       {
         "command": "sfTestRunner.collapseResults",
-        "title": "SF Tests: Collapse All Results",
+        "category": "SF Tests",
+        "title": "Collapse All Results",
         "icon": "$(collapse-all)"
       },
       {
         "command": "sfTestRunner.toggleCoveragePaint",
-        "title": "SF Tests: Toggle Coverage Painting",
+        "category": "SF Tests",
+        "title": "Toggle Coverage Painting",
         "icon": "$(eye)"
       },
       {
         "command": "sfTestRunner.clearCoverage",
-        "title": "SF Tests: Clear Coverage",
+        "category": "SF Tests",
+        "title": "Clear Coverage",
         "icon": "$(clear-all)"
       },
       {
         "command": "sfTestRunner.refreshCoverage",
-        "title": "SF Tests: Load Coverage from Org",
+        "category": "SF Tests",
+        "title": "Load Coverage from Org",
         "icon": "$(cloud-download)"
       },
       {
         "command": "sfTestRunner.runClass",
-        "title": "SF Tests: Run Test Class"
+        "category": "SF Tests",
+        "title": "Run Test Class"
       },
       {
         "command": "sfTestRunner.runMethod",
-        "title": "SF Tests: Run Test Method"
+        "category": "SF Tests",
+        "title": "Run Test Method"
       },
       {
         "command": "sfTestRunner.clearCommandHistory",
-        "title": "SF Tests: Clear Command History",
+        "category": "SF Tests",
+        "title": "Clear Command History",
         "icon": "$(clear-all)"
       },
       {
         "command": "sfTestRunner.copyCommand",
-        "title": "SF Tests: Copy Command",
+        "category": "SF Tests",
+        "title": "Copy Command",
         "icon": "$(copy)"
       },
       {
         "command": "sfTestRunner.showOutput",
-        "title": "SF Tests: Show Output Channel",
+        "category": "SF Tests",
+        "title": "Show Output Channel",
         "icon": "$(output)"
       },
       {
         "command": "sfTestRunner.help",
-        "title": "SF Tests: How It Works",
+        "category": "SF Tests",
+        "title": "How It Works",
         "icon": "$(question)"
       }
     ],

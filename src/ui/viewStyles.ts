@@ -63,7 +63,10 @@ button { font-family: inherit; }
   flex: none; padding: 6px 8px; border-bottom: 1px solid var(--sfr-border);
   display: flex; flex-direction: column; gap: 6px;
 }
-.tb-row { display: flex; align-items: center; gap: 6px; }
+.tb-row { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.tb-row.acts > button { flex: 1 1 0; min-width: max-content; white-space: nowrap; }
+.tb-row .stamp { flex-basis: 100%; }
+.tb-row .stamp:empty { display: none; }
 .tb-row .lbl { color: var(--sfr-muted); flex: none; }
 select, input[type="text"] {
   background: var(--sfr-input-bg); color: var(--sfr-input-fg);
@@ -101,15 +104,6 @@ select, input[type="text"] {
 .subtle-btn:hover { color: var(--sfr-fg); text-decoration: underline; }
 .stamp { font-size: 10px; color: var(--sfr-muted); white-space: nowrap; }
 
-.kind-badge {
-  font-size: 9px; font-weight: 700; letter-spacing: .03em;
-  padding: 1px 4px; border-radius: 2px; border: 1px solid currentColor; flex: none;
-}
-.kind-dev { color: var(--sfr-info); }
-.kind-sandbox { color: var(--sfr-muted); }
-.kind-scratch { color: var(--sfr-warn); }
-.kind-prod, .kind-unknown { color: var(--sfr-fail); background: rgba(229, 20, 0, .12); }
-
 .prod-note {
   flex: none; display: flex; gap: 6px; align-items: flex-start;
   padding: 5px 10px; font-size: 11px;
@@ -117,7 +111,7 @@ select, input[type="text"] {
   border-bottom: 1px solid var(--sfr-border);
 }
 
-/* -------------------------- tabs, filters, menu ------------------------- */
+/* ----------------------------- tabs, filters ---------------------------- */
 .tabs {
   flex: none; display: flex; gap: 2px; padding: 4px 8px 0;
   border-bottom: 1px solid var(--sfr-border);
@@ -135,8 +129,10 @@ select, input[type="text"] {
   display: flex; flex-direction: column; gap: 5px;
 }
 .filters input[type="text"] { width: 100%; }
-.filters .frow { display: flex; align-items: center; gap: 6px; }
-.filters select { flex: 1; }
+.filters .frow { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+/* A floor, and a row that wraps: the counts beside it never shrink, so without
+ * this the select absorbed every shortfall and became an arrow stub. */
+.filters select { flex: 1 1 120px; min-width: 120px; }
 
 .filter-row {
   padding: 3px 10px 5px; display: flex; gap: 10px; font-size: 11px; flex: none;
@@ -147,22 +143,6 @@ select, input[type="text"] {
   cursor: pointer; font-size: 11px; padding: 0;
 }
 .filter-row button.active { color: var(--sfr-fg); font-weight: 600; text-decoration: underline; }
-
-.menu-wrap { position: relative; }
-.menu {
-  position: absolute; right: 0; bottom: 26px; z-index: 12; min-width: 210px;
-  background: var(--vscode-menu-background, var(--vscode-editorWidget-background, #252526));
-  border: 1px solid var(--sfr-border);
-  border-radius: 4px; padding: 4px 0; box-shadow: 0 2px 10px rgba(0, 0, 0, .36);
-  display: none;
-}
-.menu.open { display: block; }
-.menu button {
-  display: block; width: 100%; text-align: left; background: transparent; border: 0;
-  color: var(--sfr-fg); font-size: 12px; padding: 4px 12px; cursor: pointer;
-}
-.menu button:hover { background: var(--sfr-sel); }
-.menu-sep { display: block; height: 1px; margin: 4px 0; background: var(--sfr-border); }
 
 /* ---------------------------- selection tree ---------------------------- */
 .tree { flex: 1 1 auto; min-height: 40px; overflow-y: auto; padding: 3px 0; }
@@ -203,15 +183,28 @@ select, input[type="text"] {
   flex: none; display: flex; gap: 6px; flex-wrap: wrap; align-items: center;
   padding: 7px 8px; border-top: 1px solid var(--sfr-border); border-bottom: 1px solid var(--sfr-border);
 }
+/* Only the Tests view stacks its actions; the Coverage view's footer is the
+ * same class and stays a single centred row. */
+.actions.stack { flex-direction: column; align-items: stretch; flex-wrap: nowrap; }
+.arow { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
+/* max-content, not 0: an equal share that is narrower than the label would let
+ * the text spill over the next button in a narrow sidebar. Wrapping is fine. */
+.arow.run > button { flex: 1 1 0; min-width: max-content; white-space: nowrap; }
 .actions .spacer { flex: 1; }
-.selcount { font-size: 11px; color: var(--sfr-muted); }
+.selcount { font-size: 11px; color: var(--sfr-muted); margin-left: auto; white-space: nowrap; }
 .cov-chip {
   display: inline-flex; align-items: center; gap: 5px; cursor: pointer;
-  font-size: 11px; padding: 2px 7px; border-radius: 10px;
+  font-size: 11px; padding: 2px 7px; border-radius: 2px;
   border: 1px solid var(--sfr-border); color: var(--sfr-muted); user-select: none;
 }
 .cov-chip.on { color: var(--sfr-fg); border-color: var(--sfr-btn-bg); background: var(--sfr-sel); }
 .cov-chip input { margin: 0; width: 12px; height: 12px; accent-color: var(--sfr-btn-bg); }
+
+.cov-rest > summary {
+  cursor: pointer; font-size: 11px; color: var(--sfr-muted);
+  padding: 4px 10px; user-select: none;
+}
+.cov-rest > summary:hover { color: var(--sfr-fg); }
 
 /* ------------------------------ progress ------------------------------- */
 .progress { flex: none; padding: 7px 10px; border-bottom: 1px solid var(--sfr-border); }

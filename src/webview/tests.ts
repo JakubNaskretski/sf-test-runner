@@ -178,7 +178,6 @@ function viewRows(s: TestsViewState): Row[] {
 interface Ui {
   nodes: HTMLElement[];
   orgSelect: HTMLSelectElement;
-  orgBadge: HTMLElement;
   rescan: HTMLButtonElement;
   rescanSpin: HTMLElement;
   fetchOrg: HTMLButtonElement;
@@ -199,9 +198,7 @@ interface Ui {
   runSelected: HTMLButtonElement;
   runLocal: HTMLButtonElement;
   cancel: HTMLButtonElement;
-  more: HTMLButtonElement;
-  menu: HTMLElement;
-  menuRunOrg: HTMLButtonElement;
+  runOrg: HTMLButtonElement;
   progress: HTMLElement;
   progText: HTMLElement;
   progElapsed: HTMLElement;
@@ -239,7 +236,6 @@ function buildShell(): Ui {
   orgSelect.addEventListener('change', () => {
     if (orgSelect.value) post({ type: 'tests:selectOrg', username: orgSelect.value });
   });
-  const orgBadge = el('span', { class: 'kind-badge kind-unknown', text: 'ORG' });
   const refreshOrgs = button('icon-btn', '⟳', {
     title: 'Refresh the org list (sf org list)',
     'aria-label': 'Refresh org list',
@@ -264,11 +260,10 @@ function buildShell(): Ui {
     el('div', { class: 'tb-row' }, [
       el('span', { class: 'lbl', text: 'Org:' }),
       orgSelect,
-      orgBadge,
       refreshOrgs,
       login,
     ]),
-    el('div', { class: 'tb-row' }, [rescanBtn.node, fetchBtn.node, stamp]),
+    el('div', { class: 'tb-row acts' }, [rescanBtn.node, fetchBtn.node, stamp]),
   ]);
 
   // ── production warning ──
@@ -314,9 +309,15 @@ function buildShell(): Ui {
     render();
   });
   const counts = el('span', { class: 'stamp' });
+  const selCount = el('span', { class: 'selcount', text: '0 selected' });
+  const clearSel = button('subtle-btn', '✕', {
+    title: 'Clear the selection',
+    'aria-label': 'Clear the selection',
+  });
+  clearSel.addEventListener('click', () => post({ type: 'tests:clearSelection' }));
   const filters = el('div', { class: 'filters' }, [
     search,
-    el('div', { class: 'frow' }, [source, counts]),
+    el('div', { class: 'frow' }, [source, counts, selCount, clearSel]),
   ]);
 
   // ── tree ──
@@ -326,16 +327,10 @@ function buildShell(): Ui {
   tree.addEventListener('scroll', () => saveLocal(), { passive: true });
 
   // ── actions ──
-  const activeFile = button('sec-btn', 'Tests for active file', {
-    title: 'Select the tests for the file open in the editor',
+  const activeFile = button('sec-btn', 'Select tests for active class', {
+    title: 'Tick the tests for the class open in the editor',
   });
   activeFile.addEventListener('click', () => post({ type: 'tests:activeFile' }));
-  const selCount = el('span', { class: 'selcount', text: '0 selected' });
-  const clearSel = button('subtle-btn', '✕', {
-    title: 'Clear the selection',
-    'aria-label': 'Clear the selection',
-  });
-  clearSel.addEventListener('click', () => post({ type: 'tests:clearSelection' }));
   const covToggle = el('input', {
     type: 'checkbox',
     'aria-label': 'Collect code coverage with the run',
@@ -348,48 +343,21 @@ function buildShell(): Ui {
     title: 'Run the ticked tests (--tests)',
   });
   runSelected.addEventListener('click', () => post({ type: 'tests:run', scope: 'selected' }));
-  const runLocal = button('sec-btn', 'Run All Local', {
-    title: 'Run every local test in the org (RunLocalTests)',
+  const runLocal = button('sec-btn', 'All Local', {
+    title: 'Run every local test in the org — RunLocalTests',
   });
   runLocal.addEventListener('click', () => post({ type: 'tests:run', scope: 'allLocal' }));
+  const runOrg = button('sec-btn', 'All in Org', {
+    title: 'Run every test in the org, managed packages included — RunAllTestsInOrg',
+  });
+  runOrg.addEventListener('click', () => post({ type: 'tests:run', scope: 'allInOrg' }));
   const cancel = button('danger-btn', 'Cancel', { title: 'Cancel the run in flight' });
   cancel.addEventListener('click', () => post({ type: 'tests:cancel' }));
   show(cancel, false);
 
-  const more = button('sec-btn', '⋯', {
-    title: 'More actions',
-    'aria-haspopup': 'true',
-    'aria-expanded': 'false',
-    'aria-label': 'More actions',
-  });
-  const menuRunOrg = button('', 'Run all tests in org', { role: 'menuitem' });
-  menuRunOrg.addEventListener('click', () => {
-    closeMenu();
-    post({ type: 'tests:run', scope: 'allInOrg' });
-  });
-  const menuRecent = button('', 'Load recent run…', { role: 'menuitem' });
-  menuRecent.addEventListener('click', () => {
-    closeMenu();
-    post({ type: 'tests:loadRecent' });
-  });
-  const menu = el('span', { class: 'menu', role: 'menu' }, [menuRunOrg, menuRecent]);
-  more.addEventListener('click', (ev) => {
-    ev.stopPropagation();
-    const open = !menu.classList.contains('open');
-    menu.classList.toggle('open', open);
-    more.setAttribute('aria-expanded', open ? 'true' : 'false');
-  });
-
-  const actions = el('div', { class: 'actions' }, [
-    activeFile,
-    el('span', { class: 'spacer' }),
-    selCount,
-    clearSel,
-    covChip,
-    runSelected,
-    runLocal,
-    cancel,
-    el('span', { class: 'menu-wrap' }, [more, menu]),
+  const actions = el('div', { class: 'actions stack' }, [
+    el('div', { class: 'arow' }, [activeFile, covChip]),
+    el('div', { class: 'arow run' }, [runSelected, runLocal, runOrg, cancel]),
   ]);
 
   // ── progress ──
@@ -407,7 +375,6 @@ function buildShell(): Ui {
   return {
     nodes: [toolbar, prodNote, tabs, filters, tree, actions, progress],
     orgSelect,
-    orgBadge,
     rescan: rescanBtn.node,
     rescanSpin: rescanBtn.spin,
     fetchOrg: fetchBtn.node,
@@ -428,9 +395,7 @@ function buildShell(): Ui {
     runSelected,
     runLocal,
     cancel,
-    more,
-    menu,
-    menuRunOrg,
+    runOrg,
     progress,
     progText,
     progElapsed,
@@ -438,11 +403,6 @@ function buildShell(): Ui {
   };
 }
 
-function closeMenu(): void {
-  if (!ui) return;
-  ui.menu.classList.remove('open');
-  ui.more.setAttribute('aria-expanded', 'false');
-}
 
 // ──────────────────────────────── tree events ───────────────────────────────
 
@@ -543,10 +503,6 @@ function renderToolbar(s: TestsViewState, u: Ui): void {
   }
   u.orgSelect.value = current;
   u.orgSelect.disabled = s.orgs.length === 0 && !s.org;
-
-  u.orgBadge.className = `kind-badge kind-${s.org ? s.org.kind : 'unknown'}`;
-  u.orgBadge.textContent = s.org ? s.org.badge : 'ORG';
-  u.orgBadge.title = s.org ? `${s.org.username} · ${s.org.badge}` : 'No org selected';
 
   const prod = s.org?.kind === 'prod';
   show(u.prodNote, prod);
@@ -745,13 +701,13 @@ function renderActions(s: TestsViewState, u: Ui): void {
   show(u.clearSel, n > 0);
   show(u.runSelected, !running);
   show(u.runLocal, !running);
+  show(u.runOrg, !running);
   show(u.cancel, running);
   u.runSelected.disabled = n === 0 || running;
   u.activeFile.disabled = running;
-  u.menuRunOrg.disabled = running;
+  u.runOrg.disabled = running;
   u.covToggle.checked = s.runWithCoverage;
   u.covChip.classList.toggle('on', s.runWithCoverage);
-  if (running) closeMenu();
 }
 
 function renderProgress(s: TestsViewState, u: Ui): void {
@@ -840,15 +796,6 @@ window.addEventListener('message', (ev: MessageEvent) => {
   const data = ev.data as { type?: unknown; state?: unknown } | null;
   if (!data || data.type !== 'tests:state' || typeof data.state !== 'object' || !data.state) return;
   onState(data.state as TestsViewState);
-});
-
-document.addEventListener('click', () => closeMenu());
-document.addEventListener('keydown', (ev: KeyboardEvent) => {
-  if (ev.key !== 'Escape') return;
-  const u = ui;
-  if (!u || !u.menu.classList.contains('open')) return;
-  closeMenu();
-  u.more.focus();
 });
 
 root.replaceChildren(el('div', { class: 'empty', text: 'Loading tests…' }));

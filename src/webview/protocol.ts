@@ -95,7 +95,6 @@ export type TestsViewMessage =
   | { type: 'tests:activeFile' }
   | { type: 'tests:open'; name: string; method?: string }
   | { type: 'tests:setRunWithCoverage'; on: boolean }
-  | { type: 'tests:loadRecent' }
   | { type: 'tests:ready' };
 
 // ───────────────────────────── results view ─────────────────────────────
@@ -133,11 +132,15 @@ export interface CoverageRow {
   total: number;
   /** False for a class with no local file — the row is greyed and does not open. */
   hasSource: boolean;
+  /** True for a class the run was aimed at; those rows lead the table. */
+  focus: boolean;
 }
 
 /** The view's flattened read of a `CoverageSnapshot` (src/types.ts). */
 export interface CoverageViewSnapshot {
   label: string;
+  /** Mirrors `CoverageSnapshot.scope` (src/types.ts) — the header says it in words. */
+  scope: 'run' | 'loaded' | 'org';
   at: number;
   orgUsername: string;
   /** null when nothing measurable came back (no lines at all). */
@@ -186,7 +189,6 @@ export const TESTS_MESSAGE_SHAPES: Record<TestsViewMessage['type'], MessageShape
   'tests:activeFile': { type: 'string' },
   'tests:open': { type: 'string', name: 'string', method: 'string?' },
   'tests:setRunWithCoverage': { type: 'string', on: 'boolean' },
-  'tests:loadRecent': { type: 'string' },
   'tests:ready': { type: 'string' },
 };
 

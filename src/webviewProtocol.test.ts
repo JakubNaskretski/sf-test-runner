@@ -52,7 +52,6 @@ const TESTS_TYPES: Record<TestsViewMessage['type'], true> = {
   'tests:activeFile': true,
   'tests:open': true,
   'tests:setRunWithCoverage': true,
-  'tests:loadRecent': true,
   'tests:ready': true,
 };
 

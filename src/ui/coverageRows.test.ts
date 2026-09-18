@@ -3,6 +3,7 @@ import { test } from 'node:test';
 import { CoverageInfo } from '../types';
 import {
   band,
+  classesUnderTest,
   indexByClassName,
   overallOf,
   pctOf,
@@ -75,7 +76,20 @@ test('rowsFor sorts worst first and breaks ties by name', () => {
     covered: 43,
     total: 74,
     hasSource: true,
+    focus: false,
   });
+});
+
+test('rowsFor marks the classes the run was aimed at, case-insensitively', () => {
+  const marked = rowsFor(
+    [info('AccountService', 1, 1), info('ContactMergeService', 1, 1)],
+    () => true,
+    classesUnderTest(['AccountserviceTest']),
+  );
+  assert.deepEqual(
+    marked.filter((r) => r.focus).map((r) => r.className),
+    ['AccountService'],
+  );
 });
 
 test('rowsFor marks classes the workspace does not have', () => {
@@ -117,4 +131,21 @@ test('indexByClassName keys case-insensitively', () => {
   const index = indexByClassName([info('InvoiceCalculator', 1, 1)]);
   assert.equal(index.get('invoicecalculator')?.className, 'InvoiceCalculator');
   assert.equal(index.get('InvoiceCalculator'), undefined);
+});
+
+test('classesUnderTest inverts the four test-naming conventions', () => {
+  const found = classesUnderTest(['FooTest', 'TestBar', 'Baz_Test', 'QuxTests']);
+  assert.deepEqual([...found].sort(), ['bar', 'baz', 'foo', 'qux']);
+});
+
+test('classesUnderTest ignores a test class that matches no convention', () => {
+  assert.deepEqual([...classesUnderTest(['NightlyScenarios', ''])], []);
+});
+
+test('classesUnderTest does not mistake an ordinary word ending in "test"', () => {
+  assert.deepEqual([...classesUnderTest(['Contest', 'Latest', 'Tester', 'Test', 'Tests'])], []);
+});
+
+test('classesUnderTest tolerates the underscore spellings', () => {
+  assert.deepEqual([...classesUnderTest(['Foo__Test', 'Test_Bar'])].sort(), ['bar', 'foo']);
 });

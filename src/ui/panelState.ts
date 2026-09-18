@@ -17,7 +17,6 @@ import {
   TestRunSummary,
 } from '../types';
 import {
-  CoverageRow,
   CoverageViewState,
   OutcomeEntry,
   OrgOption,
@@ -26,6 +25,7 @@ import {
   TestsBusy,
   TestsViewState,
 } from '../webview/protocol';
+import { overallOf, rowsFor } from './coverageRows';
 import { liveForResults } from './liveOutcomes';
 import { SelectionSet } from './selection';
 
@@ -295,29 +295,22 @@ export class PanelState implements vscode.Disposable {
   toCoverageViewState(): CoverageViewState {
     const snapshot = this._coverage;
     if (!snapshot) return { snapshot: undefined, paint: this.paintCoverage };
-    let covered = 0;
-    let total = 0;
-    const rows: CoverageRow[] = snapshot.infos.map((info) => {
-      const lines = info.numLinesCovered + info.numLinesUncovered;
-      covered += info.numLinesCovered;
-      total += lines;
-      return {
-        className: info.className,
-        pct: lines === 0 ? 100 : Math.round((info.numLinesCovered / lines) * 100),
-        covered: info.numLinesCovered,
-        total: lines,
-        // Nothing known about local files yet ⇒ assume the row can be opened;
-        // the open handler reports it if the file really is missing.
-        hasSource: this._localClassNames.size === 0 || this._localClassNames.has(info.className),
-      };
-    });
-    rows.sort((a, b) => a.pct - b.pct || a.className.localeCompare(b.className));
+    // The rows are `coverageRows`' arithmetic, not a second copy of it: the
+    // status bar and this table must never disagree by a rounding step.
+    const rows = rowsFor(
+      snapshot.infos,
+      // Nothing known about local files yet ⇒ assume the row can be opened; the
+      // open handler reports it if the file really is missing.
+      (name) => this._localClassNames.size === 0 || this._localClassNames.has(name),
+      new Set(snapshot.focus ?? []),
+    );
     return {
       snapshot: {
         label: snapshot.label,
+        scope: snapshot.scope,
         at: snapshot.at,
         orgUsername: snapshot.orgUsername,
-        overall: total === 0 ? null : Math.round((covered / total) * 100),
+        overall: overallOf(snapshot.infos),
         rows,
       },
       paint: this.paintCoverage,

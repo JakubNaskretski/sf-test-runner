@@ -40,7 +40,6 @@ export interface TestsActions {
   login(): void;
   testsForActiveFile(): void;
   open(name: string, method?: string): void;
-  loadRecent(): void;
 }
 
 /** State posts are coalesced: a rescan or a run can fire the store's event many
@@ -238,9 +237,6 @@ export class TestsViewProvider implements vscode.WebviewViewProvider, vscode.Dis
           return;
         }
         actions.open(msg.name, msg.method);
-        return;
-      case 'tests:loadRecent':
-        actions.loadRecent();
         return;
     }
   }
