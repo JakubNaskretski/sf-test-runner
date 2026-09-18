@@ -122,6 +122,13 @@ export interface RunRecord {
 export interface CoverageSnapshot {
   /** Provenance, shown in the table header and the decorator tooltip. */
   label: string;
+  /**
+   * Where the numbers came from: a run this window started, a run pulled out of
+   * the org's history (possibly someone else's), or the org's stored aggregate
+   * for one class. The header says which — an unattributed percentage reads as
+   * the org's official coverage, which none of the three are.
+   */
+  scope: 'run' | 'loaded' | 'org';
   orgUsername: string;
   at: number;
   runId?: string;

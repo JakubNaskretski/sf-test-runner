@@ -34,7 +34,7 @@ The **SF Tests** activity-bar icon opens four views. Each is a collapsible secti
 | `SF Tests: Rescan Workspace for Tests` | Re-read the `.cls` files in the workspace. |
 | `SF Tests: Fetch Test Classes from Org` | Merge the org's test classes into the tree. |
 | `SF Tests: Select Target Org` / `Refresh Org List` / `Log In to an Org` | The org dropdown's actions, also from the palette. |
-| `SF Tests: Select Tests for Active File` | Tick the tests for the class open in the editor. |
+| `SF Tests: Select Tests for Active Class` | Tick the tests for the class open in the editor. |
 | `SF Tests: Re-run Failed Tests` | Run again only what failed in the last run, against the same org. |
 | `SF Tests: Copy Run Summary` | The run bar and every failure as text. |
 | `SF Tests: Load Recent Test Runs` | Pick one of the org's recent async runs and load it into the Results view. |

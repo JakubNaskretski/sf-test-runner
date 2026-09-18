@@ -130,7 +130,6 @@ select, input[type="text"] {
 }
 .filters input[type="text"] { width: 100%; }
 .filters .frow { display: flex; align-items: center; gap: 6px; }
-.filters .spacer { flex: 1; }
 .filters select { flex: 1; }
 
 .filter-row {
@@ -179,13 +178,18 @@ select, input[type="text"] {
 
 /* ------------------------------- actions ------------------------------- */
 .actions {
-  flex: none; display: flex; flex-direction: column; gap: 6px;
+  flex: none; display: flex; gap: 6px; flex-wrap: wrap; align-items: center;
   padding: 7px 8px; border-top: 1px solid var(--sfr-border); border-bottom: 1px solid var(--sfr-border);
 }
+/* Only the Tests view stacks its actions; the Coverage view's footer is the
+ * same class and stays a single centred row. */
+.actions.stack { flex-direction: column; align-items: stretch; flex-wrap: nowrap; }
 .arow { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
-.arow.run > button { flex: 1 1 0; min-width: 0; white-space: nowrap; }
+/* max-content, not 0: an equal share that is narrower than the label would let
+ * the text spill over the next button in a narrow sidebar. Wrapping is fine. */
+.arow.run > button { flex: 1 1 0; min-width: max-content; white-space: nowrap; }
 .actions .spacer { flex: 1; }
-.selcount { font-size: 11px; color: var(--sfr-muted); }
+.selcount { font-size: 11px; color: var(--sfr-muted); margin-left: auto; white-space: nowrap; }
 .cov-chip {
   display: inline-flex; align-items: center; gap: 5px; cursor: pointer;
   font-size: 11px; padding: 2px 7px; border-radius: 2px;

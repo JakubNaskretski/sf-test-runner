@@ -87,7 +87,7 @@
       {
         "command": "sfTestRunner.testsForActiveFile",
         "category": "SF Tests",
-        "title": "Select Tests for Active File"
+        "title": "Select Tests for Active Class"
       },
       {
         "command": "sfTestRunner.rerunFailed",

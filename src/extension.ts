@@ -203,7 +203,6 @@ export function activate(context: vscode.ExtensionContext): void {
     login: () => void loginOrg(),
     testsForActiveFile: () => void selectTestsForActiveFile(),
     open: (name, method) => void resolver.open(name, { method }),
-    loadRecent: () => void runner.loadRecent(),
   };
 
   const resultsActions: ResultsActions = {

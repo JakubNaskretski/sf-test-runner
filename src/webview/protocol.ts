@@ -95,7 +95,6 @@ export type TestsViewMessage =
   | { type: 'tests:activeFile' }
   | { type: 'tests:open'; name: string; method?: string }
   | { type: 'tests:setRunWithCoverage'; on: boolean }
-  | { type: 'tests:loadRecent' }
   | { type: 'tests:ready' };
 
 // ───────────────────────────── results view ─────────────────────────────
@@ -140,13 +139,8 @@ export interface CoverageRow {
 /** The view's flattened read of a `CoverageSnapshot` (src/types.ts). */
 export interface CoverageViewSnapshot {
   label: string;
-  /**
-   * Where the numbers came from: 'run' is coverage the run itself measured,
-   * 'org' is the org's stored aggregate for one class (last run, any user).
-   * The header says which in words — an overall percentage with no provenance
-   * reads as the org's official coverage, which neither of these is.
-   */
-  scope: 'run' | 'org';
+  /** Mirrors `CoverageSnapshot.scope` (src/types.ts) — the header says it in words. */
+  scope: 'run' | 'loaded' | 'org';
   at: number;
   orgUsername: string;
   /** null when nothing measurable came back (no lines at all). */
@@ -195,7 +189,6 @@ export const TESTS_MESSAGE_SHAPES: Record<TestsViewMessage['type'], MessageShape
   'tests:activeFile': { type: 'string' },
   'tests:open': { type: 'string', name: 'string', method: 'string?' },
   'tests:setRunWithCoverage': { type: 'string', on: 'boolean' },
-  'tests:loadRecent': { type: 'string' },
   'tests:ready': { type: 'string' },
 };
 

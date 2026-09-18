@@ -317,13 +317,7 @@ function buildShell(): Ui {
   clearSel.addEventListener('click', () => post({ type: 'tests:clearSelection' }));
   const filters = el('div', { class: 'filters' }, [
     search,
-    el('div', { class: 'frow' }, [
-      source,
-      counts,
-      el('span', { class: 'spacer' }),
-      selCount,
-      clearSel,
-    ]),
+    el('div', { class: 'frow' }, [source, counts, selCount, clearSel]),
   ]);
 
   // ── tree ──
@@ -361,7 +355,7 @@ function buildShell(): Ui {
   cancel.addEventListener('click', () => post({ type: 'tests:cancel' }));
   show(cancel, false);
 
-  const actions = el('div', { class: 'actions' }, [
+  const actions = el('div', { class: 'actions stack' }, [
     el('div', { class: 'arow' }, [activeFile, covChip]),
     el('div', { class: 'arow run' }, [runSelected, runLocal, runOrg, cancel]),
   ]);
