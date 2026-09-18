@@ -2,6 +2,12 @@
 
 All notable changes to the "sf-test-runner" extension are documented here.
 
+## [0.11.0] - 2026-09-18
+
+- **A tidier Tests view.** The org dropdown no longer carries a separate kind badge — the DEV/SBX/PROD/SCR tag is on the option itself, and a production org still gets its warning bar. Rescan and Fetch org tests now split the toolbar row evenly, and the action area is two rows: **Select tests for active class** with the "with coverage" checkbox, then **Run Selected**, **All Local** and **All in Org** as one full-width run row. The ⋯ menu is gone — Run all tests in org is a plain button and Load recent run stays in the view title. The selection count moved up beside the class and test counts.
+- **Coverage says where its numbers came from.** The header reads "From this run · 39% across 143 classes" or "Stored in the org · 82%", and the legend spells out that a run's overall average covers only the classes that run exercised — not the org's coverage.
+- Command titles no longer repeat "SF Tests" in view-title tooltips; the palette still groups them under **SF Tests**.
+
 ## [0.10.0] - 2026-09-18
 
 - **?** in the Tests view title opens a short guide — picking the org, ticking and running tests, reading results and coverage, the CodeLens links — with an **Open README** button for the full documentation.
