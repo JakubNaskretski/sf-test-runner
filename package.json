@@ -2,7 +2,7 @@
   "name": "sf-test-runner",
   "displayName": "Salesforce Test Runner",
   "description": "Run Apex tests from a sidebar panel: pick the target org, tick classes and methods across local and org tests, read parsed results with clickable failures, and see coverage in the Coverage view and painted on your editor lines. Every sf CLI command we execute is listed in a collapsible log. Reuses your existing sf CLI auth.",
-  "version": "0.14.0",
+  "version": "0.15.0",
   "publisher": "Skrety",
   "icon": "icons/plugin-icon.png",
   "license": "MIT",
@@ -338,7 +338,7 @@
           "type": "boolean",
           "default": false,
           "scope": "machine",
-          "markdownDescription": "Follow and publish the Salesforce org shared across the Skrety SF plugins (`skrety.salesforce.targetOrg`). Off: this plugin keeps its own org and ignores switches made in sibling plugins."
+          "markdownDescription": "Follow and publish the Salesforce org shared across the Skrety SF plugins (`skrety.salesforce.targetOrg`). Off: this plugin keeps its own org and ignores switches made in sibling plugins. The shared org is machine-wide, so with sync on every VS Code window follows the same org; with it off each window keeps its own."
         }
       }
     }
