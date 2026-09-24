@@ -2,6 +2,10 @@
 
 All notable changes to the "sf-test-runner" extension are documented here.
 
+## [0.13.0] - 2026-09-24
+
+- **Copy in the Results view now carries the stack trace.** Each failure line is followed by every frame of its stack, indented, so the copied summary pastes straight into a ticket or an AI assistant with the class, method and line where the test broke. The view itself is unchanged — frames still show only when you expand the failing class.
+
 ## [0.12.0] - 2026-09-18
 
 - **Coverage leads with the classes the run was actually about.** A run reports every class its tests touched, so one test class could bury the class you cared about under forty others and the headline percentage averaged the lot. The view now resolves what each test class was aimed at and leads with those, grouped by how well it knows: **Declared** from Salesforce's `@IsTest(testFor='ApexClass:Foo')` annotation (API v66+, and it names triggers just as well), **By name** from the `FooTest`/`TestFoo`/`Foo_Test`/`FooTests` conventions — accepted only when that class really was covered — and **By truncated name** for a class whose name is too long to have a conventional test class, matched on a prefix and declining whenever two candidates fit. Each row's tooltip names the test classes that pointed at it.
