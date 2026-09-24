@@ -15,7 +15,7 @@ The **SF Tests** activity-bar icon opens four views. Each is a collapsible secti
 - **Load Recent Test Runs** — pull in any recent async run of the org, including runs started from a terminal, CI, or lost to a window reload; it lands in the Results view like your own.
 - **Production runs ask first** — a run against an org classified as production needs a modal confirmation before anything starts.
 - **Command log** — every CLI invocation with its full command, duration and any error; **Copy Command** drops the exact invocation into your clipboard. Starts collapsed.
-- **Your org is your own** — the choice made here is remembered by this extension and does not follow the org other tools select. Set `sfTestRunner.syncOrgWithFamily` to `true` to follow (and publish) the org shared with the other Skrety Salesforce extensions.
+- **Your org is your own** — the choice made here is remembered by this extension, per VS Code window (each open workspace keeps its own target org), and does not follow the org other tools select. Set `sfTestRunner.syncOrgWithFamily` to `true` to follow (and publish) the org shared with the other Skrety Salesforce extensions.
 
 ## Requirements
 
