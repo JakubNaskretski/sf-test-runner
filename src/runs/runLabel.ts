@@ -120,6 +120,7 @@ export function summaryText(run: RunRecord): string {
   for (const failure of failedResults(summary)) {
     const detail = oneLine(failure.message) || failure.outcome;
     lines.push(`✗ ${failure.className}.${failure.methodName} — ${detail}`);
+    for (const frame of stackLines(failure.stackTrace)) lines.push(`    ${frame}`);
   }
   return lines.join('\n');
 }
@@ -137,6 +138,14 @@ function verdict(status: RunRecord['status']): string {
     default:
       return 'ERROR';
   }
+}
+
+/** Stack trace as trimmed non-empty lines, oldest-deepest first as the CLI gave it. */
+function stackLines(text: string | null | undefined): string[] {
+  return (text ?? '')
+    .split(/\r?\n/)
+    .map((l) => l.trim())
+    .filter(Boolean);
 }
 
 /** Collapse a multi-line CLI message onto one line so the copy stays scannable. */
