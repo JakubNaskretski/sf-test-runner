@@ -433,11 +433,20 @@ export class SfCliService {
   ): Promise<string> {
     const level = (
       await this.queryRecords(
-        "SELECT Id FROM DebugLevel WHERE DeveloperName = 'SfTestRunner'",
+        "SELECT Id, ApexCode FROM DebugLevel WHERE DeveloperName = 'SfTestRunner'",
         orgUsername,
         options,
       )
     )[0];
+    if (typeof level?.Id === 'string' && level.ApexCode !== 'DEBUG') {
+      // Someone edited our level: put it back, or every "relevel" would land on
+      // a level that swallows System.debug and the user would only ever see empty logs.
+      await this.toolingWrite(
+        ['update', '-s', 'DebugLevel', '-i', level.Id, '-v', 'ApexCode=DEBUG'],
+        orgUsername,
+        options,
+      );
+    }
     const id =
       typeof level?.Id === 'string'
         ? level.Id

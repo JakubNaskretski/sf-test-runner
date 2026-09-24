@@ -370,6 +370,7 @@ const HOUR = 60 * 60 * 1000;
 function debugOrg(over: {
   flags?: unknown[];
   level?: boolean;
+  levelApexCode?: string;
   created?: string;
 }): ReturnType<typeof withCalls> {
   return withCalls((args) => {
@@ -377,7 +378,8 @@ function debugOrg(over: {
     if (q.startsWith('SELECT Id FROM User')) return { status: 0, result: { records: [{ Id: USER_ID }] } };
     if (q.includes('FROM TraceFlag')) return { status: 0, result: { records: over.flags ?? [] } };
     if (q.includes('FROM DebugLevel')) {
-      return { status: 0, result: { records: over.level === false ? [] : [{ Id: LEVEL_ID }] } };
+      const row = { Id: LEVEL_ID, ApexCode: over.levelApexCode ?? 'DEBUG' };
+      return { status: 0, result: { records: over.level === false ? [] : [row] } };
     }
     if (args[1] === 'create' || args[1] === 'update') {
       return { status: 0, result: { id: over.created ?? LEVEL_ID, success: true } };
@@ -465,4 +467,13 @@ test('getApexLog reads the body from the wrapped and the bare envelope shapes', 
   assert.equal(await bare.svc.getApexLog(LOG_ID, 'u@example.com'), 'A|B');
   await assert.rejects(() => withCalls(() => ({ status: 0, result: [] })).svc.getApexLog(LOG_ID, 'u@example.com'), SfCliError);
   await assert.rejects(() => wrapped.svc.getApexLog('not an id', 'u@example.com'), SfCliError);
+});
+
+test('ensureDebugLogging restores the plugin level when someone edited it below DEBUG', async () => {
+  const flags = [{ Id: FLAG_ID, ExpirationDate: '2025-07-29T22:29:00.000+0000', DebugLevel: { ApexCode: 'NONE' } }];
+  const { svc, calls } = debugOrg({ flags, levelApexCode: 'NONE' });
+  await svc.ensureDebugLogging('u@example.com', HOUR);
+  const w = writes(calls);
+  assert.deepEqual(w[0].slice(0, 10), ['data', 'update', 'record', '--use-tooling-api', '-s', 'DebugLevel', '-i', LEVEL_ID, '-v', 'ApexCode=DEBUG']);
+  assert.equal(w[1][5], 'TraceFlag');
 });

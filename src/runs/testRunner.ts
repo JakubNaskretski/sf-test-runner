@@ -420,7 +420,7 @@ export class TestRunner implements vscode.Disposable {
       }
       if (ids.size > 0) {
         this.deps.output.appendLine(`  ${ids.size} debug log(s) kept — "log" next to a method opens it`);
-      } else {
+      } else if (summary.results.length > 0) {
         // The output channel is hidden by default, so this cannot live only there.
         const note = 'no debug logs came back with this run — the org keeps none once its log allocation is full, or the trace flag did not cover the run';
         this.deps.output.appendLine(`  ${note}`);
@@ -547,6 +547,7 @@ export class TestRunner implements vscode.Disposable {
       this.deps.revealOutput();
       this.deps.output.appendLine(`▶ Running ${label} (${org.username})…`);
 
+      let logsArmed = false;
       if (logs) {
         // A flag that fails to land is not a reason to lose the run — but it is
         // a reason to say, before the results, that no logs will come with it.
@@ -558,6 +559,7 @@ export class TestRunner implements vscode.Disposable {
             { cancellation: cancellation.token },
           );
           this.deps.output.appendLine(`  debug logs on: ${note}`);
+          logsArmed = true;
           if (relevelled) {
             // The user's own flag was repointed at our level: say so where
             // they will see it, since their other log categories went with it.
@@ -631,7 +633,9 @@ export class TestRunner implements vscode.Disposable {
       const result = await this.deps.sfCli.getTestRun(testRunId, org.username, {
         cancellation: cancellation.token,
       });
-      if (logs) await this.attachLogIds(result.summary, testRunId, org.username);
+      // Only once the flag landed: a failed setup already warned, and a second
+      // "no logs" toast for the same cause would just be noise.
+      if (logsArmed) await this.attachLogIds(result.summary, testRunId, org.username);
       const { status, error } = verdictOf(result.summary);
       state.updateRun({
         status,

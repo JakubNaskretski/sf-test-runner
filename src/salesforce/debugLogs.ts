@@ -64,7 +64,8 @@ export function debugLines(rawLog: string): string[] {
     // rejoins with ` | `, which would pad a pipe inside the user's own text.
     .map((e) => {
       const tail = e.raw.split('|').slice(e.lineRef ? 3 : 2);
-      const text = e.category === 'USER_DEBUG' ? `${tail[0]} ${tail.slice(1).join('|')}` : tail.join('|');
+      const text =
+        e.category === 'USER_DEBUG' ? `${tail[0] ?? ''} ${tail.slice(1).join('|')}`.trim() : tail.join('|');
       return `${e.lineRef ? `${e.lineRef} ` : ''}${text}`;
     });
 }
