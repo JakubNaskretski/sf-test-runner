@@ -93,14 +93,37 @@ test('summaryText header carries verdict, counts, org, id and an ISO timestamp',
   );
 });
 
-test('summaryText lists one single-line entry per failure, passes excluded', () => {
+test('summaryText lists one entry per failure with its stack indented beneath, passes excluded', () => {
   const lines = summaryText(record()).split('\n');
-  assert.equal(lines.length, 3);
+  assert.equal(lines.length, 4);
   assert.equal(
     lines[1],
     '✗ AccountServiceTest.testUpdate — System.AssertException: Assertion Failed: expected 1, got 0',
   );
-  assert.equal(lines[2], '✗ InvoiceCalculatorTest.testNetTotal — Variable does not exist: total');
+  assert.equal(lines[2], '    Class.AccountServiceTest.testUpdate: line 9, column 1');
+  assert.equal(lines[3], '✗ InvoiceCalculatorTest.testNetTotal — Variable does not exist: total');
+});
+
+test('summaryText keeps every frame of a multi-line stack, one per line', () => {
+  const run = record({
+    summary: summary({
+      results: [
+        {
+          className: 'AccountServiceTest',
+          methodName: 'testUpdate',
+          outcome: 'Fail',
+          runTime: 1,
+          message: 'boom',
+          stackTrace: 'Class.AccountService.save: line 40, column 1\n\nClass.AccountServiceTest.testUpdate: line 9, column 1\n',
+        },
+      ],
+    }),
+  });
+  assert.deepEqual(summaryText(run).split('\n').slice(1), [
+    '✗ AccountServiceTest.testUpdate — boom',
+    '    Class.AccountService.save: line 40, column 1',
+    '    Class.AccountServiceTest.testUpdate: line 9, column 1',
+  ]);
 });
 
 test('summaryText falls back to the outcome when a failure carries no message', () => {
