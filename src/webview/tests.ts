@@ -195,6 +195,8 @@ interface Ui {
   clearSel: HTMLButtonElement;
   covChip: HTMLElement;
   covToggle: HTMLInputElement;
+  logChip: HTMLElement;
+  logToggle: HTMLInputElement;
   runSelected: HTMLButtonElement;
   runLocal: HTMLButtonElement;
   cancel: HTMLButtonElement;
@@ -339,6 +341,18 @@ function buildShell(): Ui {
     post({ type: 'tests:setRunWithCoverage', on: covToggle.checked }),
   );
   const covChip = el('label', { class: 'cov-chip' }, [covToggle, document.createTextNode(' with coverage')]);
+  const logToggle = el('input', {
+    type: 'checkbox',
+    'aria-label': 'Keep each test method\'s debug log',
+  }) as HTMLInputElement;
+  logToggle.addEventListener('change', () =>
+    post({ type: 'tests:setRunWithLogs', on: logToggle.checked }),
+  );
+  const logChip = el(
+    'label',
+    { class: 'cov-chip', title: 'Ensures a USER_DEBUG trace flag for your user before the run' },
+    [logToggle, document.createTextNode(' with logs')],
+  );
   const runSelected = button('prim-btn', 'Run Selected', {
     title: 'Run the ticked tests (--tests)',
   });
@@ -356,7 +370,7 @@ function buildShell(): Ui {
   show(cancel, false);
 
   const actions = el('div', { class: 'actions stack' }, [
-    el('div', { class: 'arow' }, [activeFile, covChip]),
+    el('div', { class: 'arow' }, [activeFile, covChip, logChip]),
     el('div', { class: 'arow run' }, [runSelected, runLocal, runOrg, cancel]),
   ]);
 
@@ -392,6 +406,8 @@ function buildShell(): Ui {
     clearSel,
     covChip,
     covToggle,
+    logChip,
+    logToggle,
     runSelected,
     runLocal,
     cancel,
@@ -708,6 +724,8 @@ function renderActions(s: TestsViewState, u: Ui): void {
   u.runOrg.disabled = running;
   u.covToggle.checked = s.runWithCoverage;
   u.covChip.classList.toggle('on', s.runWithCoverage);
+  u.logToggle.checked = s.runWithLogs;
+  u.logChip.classList.toggle('on', s.runWithLogs);
 }
 
 function renderProgress(s: TestsViewState, u: Ui): void {

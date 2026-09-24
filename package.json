@@ -319,6 +319,11 @@
           "default": true,
           "description": "Ask for code coverage when running tests (the \"with coverage\" chip in the Tests view mirrors this)."
         },
+        "sfTestRunner.runWithLogs": {
+          "type": "boolean",
+          "default": false,
+          "description": "Keep each test method's debug log (the \"with logs\" chip in the Tests view mirrors this). Before the run the plugin makes sure your user has an active USER_DEBUG trace flag — extending yours, or creating one on an `SfTestRunner` debug level that logs Apex at DEBUG and nothing else."
+        },
         "sfTestRunner.paintCoverage": {
           "type": "boolean",
           "default": true,

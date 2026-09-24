@@ -19,6 +19,8 @@ export interface TestMethodResult {
   runTime: number;
   message: string | null;
   stackTrace: string | null;
+  /** The method's own debug log, when the run asked for logs and the org kept one. */
+  apexLogId?: string | null;
 }
 
 export interface TestRunSummary {
@@ -136,6 +138,8 @@ export interface RunRecord {
   finishedAt?: number;
   status: RunStatus;
   withCoverage: boolean;
+  /** The run asked for per-method debug logs (a trace flag was ensured first). */
+  withLogs?: boolean;
   summary?: TestRunSummary;
   /** Live counters while the run is in flight (async path). */
   progress?: RunProgress;

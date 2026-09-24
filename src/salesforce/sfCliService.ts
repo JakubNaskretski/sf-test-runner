@@ -19,6 +19,7 @@ import {
 import { mapRunCoverage } from './coverageMapping';
 import { mapTestResult, parseMs } from './resultMapping';
 import { parseStackTrace } from './stackParser';
+import { TRACE_FLAG_MAX_TTL_MS, TraceFlagRow, planTraceFlag } from './debugLogs';
 
 interface RunOptions {
   timeoutMs?: number;
@@ -351,6 +352,128 @@ export class SfCliService {
     } finally {
       await fs.rm(dir, { recursive: true, force: true }).catch(() => undefined);
     }
+  }
+
+  /**
+   * Make sure the running user's USER_DEBUG trace flag covers the next `ttlMs`
+   * — keep it, extend it, or create it on a plugin-owned `SfTestRunner` debug
+   * level (Apex at DEBUG, everything else NONE, so a test's log stays small).
+   * A flag on a level that would swallow `System.debug` is repointed at ours.
+   * Returns a one-line note of what it did, for the output channel.
+   */
+  async ensureDebugLogging(orgUsername: string, ttlMs: number): Promise<string> {
+    const user = (
+      await this.queryRecords(
+        `SELECT Id FROM User WHERE Username = '${soqlString(orgUsername)}'`,
+        orgUsername,
+        {},
+        'standard',
+      )
+    )[0];
+    const userId = String(user?.Id ?? '');
+    if (!ID_RE.test(userId)) throw new SfCliError(`No user ${orgUsername} in the org.`);
+
+    // Several flags may coexist with disjoint windows: the latest-expiring one
+    // is the one worth keeping or extending, never an arbitrary first row.
+    const rows = (await this.queryRecords(
+      'SELECT Id, ExpirationDate, DebugLevel.ApexCode FROM TraceFlag ' +
+        `WHERE TracedEntityId = '${userId}' AND LogType = 'USER_DEBUG' ` +
+        'ORDER BY ExpirationDate DESC NULLS LAST LIMIT 1',
+      orgUsername,
+      {},
+    )) as TraceFlagRow[];
+    const now = Date.now();
+    const ttl = Math.min(ttlMs, TRACE_FLAG_MAX_TTL_MS);
+    const plan = planTraceFlag(rows, now, ttl);
+    const window = `StartDate=${new Date(now).toISOString()} ExpirationDate=${new Date(now + ttl).toISOString()}`;
+    if (plan.action === 'create') {
+      await this.toolingWrite(
+        [
+          'create',
+          '-s',
+          'TraceFlag',
+          '-v',
+          `TracedEntityId=${userId} DebugLevelId=${await this.pluginDebugLevel(orgUsername)} ` +
+            `LogType=USER_DEBUG ${window}`,
+        ],
+        orgUsername,
+      );
+      return 'trace flag created';
+    }
+    const values = [
+      ...(plan.action === 'extend' ? [window] : []),
+      ...(plan.relevel ? [`DebugLevelId=${await this.pluginDebugLevel(orgUsername)}`] : []),
+    ];
+    if (values.length === 0) return 'trace flag already active';
+    await this.toolingWrite(
+      ['update', '-s', 'TraceFlag', '-i', plan.id, '-v', values.join(' ')],
+      orgUsername,
+    );
+    return plan.action === 'extend'
+      ? `trace flag extended${plan.relevel ? ' and set to Apex DEBUG' : ''}`
+      : 'trace flag set to Apex DEBUG';
+  }
+
+  /** Id of the plugin's `SfTestRunner` debug level, created on first use. */
+  private async pluginDebugLevel(orgUsername: string): Promise<string> {
+    const level = (
+      await this.queryRecords(
+        "SELECT Id FROM DebugLevel WHERE DeveloperName = 'SfTestRunner'",
+        orgUsername,
+        {},
+      )
+    )[0];
+    if (typeof level?.Id === 'string') return level.Id;
+    return this.toolingWrite(
+      [
+        'create',
+        '-s',
+        'DebugLevel',
+        '-v',
+        'DeveloperName=SfTestRunner MasterLabel=SfTestRunner ApexCode=DEBUG ' +
+          'ApexProfiling=NONE Callout=NONE Database=NONE System=NONE Validation=NONE ' +
+          'Visualforce=NONE Workflow=NONE',
+      ],
+      orgUsername,
+    );
+  }
+
+  /** `sf data create|update record --use-tooling-api …`; returns the record id. */
+  private async toolingWrite(rest: string[], orgUsername: string): Promise<string> {
+    const args = ['data', ...rest.slice(0, 1), 'record', '--use-tooling-api', ...rest.slice(1), '--json', '--target-org', orgUsername];
+    const parsed = await this.logged(args, {}, () => this.kit.runJson<any>(args));
+    if (isErrorEnvelope(parsed)) throw envelopeError(parsed, `data ${rest[0]} record`);
+    return String(parsed?.result?.id ?? '');
+  }
+
+  /** `Cls.method` → ApexLogId for every method of the run that kept a log. */
+  async getLogIds(testRunId: string, orgUsername: string): Promise<Map<string, string>> {
+    const id = assertRunId(testRunId);
+    const rows = await this.queryRecords(
+      'SELECT ApexClass.Name, MethodName, ApexLogId FROM ApexTestResult ' +
+        `WHERE AsyncApexJobId = '${id}' AND ApexLogId != null`,
+      orgUsername,
+      {},
+    );
+    const ids = new Map<string, string>();
+    for (const row of rows) {
+      const logId = String(row?.ApexLogId ?? '');
+      if (ID_RE.test(logId)) ids.set(`${row?.ApexClass?.Name}.${row?.MethodName}`, logId);
+    }
+    return ids;
+  }
+
+  /** The raw body of one debug log. */
+  async getApexLog(logId: string, orgUsername: string): Promise<string> {
+    if (!ID_RE.test(logId)) throw new SfCliError(`Refusing to fetch an invalid log id: ${logId}`);
+    const args = ['apex', 'get', 'log', '--log-id', logId, '--json', '--target-org', orgUsername];
+    const parsed = await this.logged(args, {}, () => this.kit.runJson<any>(args));
+    if (isErrorEnvelope(parsed)) throw envelopeError(parsed, 'apex get log');
+    // 2.137.7 answers `result: [{ log: "<body>" }]`; older builds answered a bare string.
+    const first = Array.isArray(parsed?.result) ? parsed.result[0] : parsed?.result;
+    const body = typeof first === 'string' ? first : first?.log;
+    if (typeof body !== 'string') throw new SfCliError('The CLI returned no log body.');
+    return body;
   }
 
   /** One SOQL query through the CLI, with the error-envelope discipline every
@@ -693,6 +816,11 @@ export class SfCliService {
 
 /** Salesforce ids as they appear in a run envelope: 15 or 18 alphanumerics. */
 const ID_RE = /^[A-Za-z0-9]{15,18}$/;
+
+/** Escape a value for a single-quoted SOQL literal. */
+function soqlString(value: string): string {
+  return value.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+}
 
 /** Ids are spliced into SOQL. Ours come from the CLI's own start envelope, so
  *  anything that is not a Salesforce id is a bug or a tampered response — not

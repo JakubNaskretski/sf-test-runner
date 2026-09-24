@@ -199,6 +199,9 @@ export class TestsViewProvider implements vscode.WebviewViewProvider, vscode.Dis
       case 'tests:setRunWithCoverage':
         void state.setRunWithCoverage(msg.on);
         return;
+      case 'tests:setRunWithLogs':
+        void state.setRunWithLogs(msg.on);
+        return;
       case 'tests:run':
         if (!isRunScope(msg.scope)) {
           this.reject(msg.type);

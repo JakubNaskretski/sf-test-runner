@@ -52,6 +52,7 @@ const TESTS_TYPES: Record<TestsViewMessage['type'], true> = {
   'tests:activeFile': true,
   'tests:open': true,
   'tests:setRunWithCoverage': true,
+  'tests:setRunWithLogs': true,
   'tests:ready': true,
 };
 
@@ -60,6 +61,7 @@ const RESULTS_TYPES: Record<ResultsViewMessage['type'], true> = {
   'results:setFilter': true,
   'results:rerunFailed': true,
   'results:copySummary': true,
+  'results:showLog': true,
   'results:loadRecent': true,
   'results:ready': true,
 };

@@ -32,6 +32,8 @@ export interface ResultsActions {
   open(className: string, method?: string, line?: number, isTrigger?: boolean): void;
   rerunFailed(): void;
   copySummary(): void;
+  /** Open the debug log the org kept for one method of the current run. */
+  showLog(className: string, methodName: string): void;
   loadRecent(): void;
 }
 
@@ -134,6 +136,10 @@ export class ResultsViewProvider implements vscode.WebviewViewProvider, vscode.D
         return;
       case 'results:copySummary':
         this.deps.actions.copySummary();
+        return;
+      case 'results:showLog':
+        if (!NAME_RE.test(message.className) || !NAME_RE.test(message.methodName)) return;
+        this.deps.actions.showLog(message.className, message.methodName);
         return;
       case 'results:loadRecent':
         this.deps.actions.loadRecent();
