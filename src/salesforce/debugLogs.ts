@@ -11,7 +11,8 @@ import { parseLogs } from '../kit/apexLogParser';
 
 export interface TraceFlagRow {
   Id: string;
-  /** ISO timestamp as the Tooling API returns it. */
+  /** ISO timestamps as the Tooling API returns them. */
+  StartDate?: string | null;
   ExpirationDate: string | null;
   /** The level the flag points at; `ApexCode` decides whether `System.debug` lands. */
   DebugLevel?: { ApexCode: string | null } | null;
@@ -46,9 +47,12 @@ export function planTraceFlag(rows: TraceFlagRow[], nowMs: number, ttlMs: number
   // margin, which is slack, not a requirement — otherwise a flag this plugin
   // extended a moment ago would be extended again on every run); a flag that
   // dies mid-run would silently drop the later methods' logs.
-  if (Number.isFinite(expires) && expires >= nowMs + ttlMs - TRACE_FLAG_MARGIN_MS) {
+  const starts = row.StartDate ? Date.parse(row.StartDate) : NaN;
+  const started = !Number.isFinite(starts) || starts <= nowMs;
+  if (started && Number.isFinite(expires) && expires >= nowMs + ttlMs - TRACE_FLAG_MARGIN_MS) {
     return { action: 'keep', id: row.Id, relevel };
   }
+  // Not started yet, or ending too soon: rewriting the window (start now) covers both.
   return { action: 'extend', id: row.Id, relevel };
 }
 

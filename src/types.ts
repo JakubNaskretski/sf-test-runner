@@ -138,8 +138,6 @@ export interface RunRecord {
   finishedAt?: number;
   status: RunStatus;
   withCoverage: boolean;
-  /** The run asked for per-method debug logs (a trace flag was ensured first). */
-  withLogs?: boolean;
   summary?: TestRunSummary;
   /** Live counters while the run is in flight (async path). */
   progress?: RunProgress;

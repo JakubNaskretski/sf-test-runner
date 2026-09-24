@@ -357,3 +357,112 @@ test('abortTestRun sends nothing when the queue has already drained', async () =
   assert.equal(await svc.abortTestRun(RUN_ID, 'u@example.com'), 0);
   assert.equal(calls.length, 1, 'the query, and no PATCH at all');
 });
+
+// ─────────────────────────── debug logs ───────────────────────────
+
+const USER_ID = '005000000000001AAA';
+const FLAG_ID = '7tf000000000001AAA';
+const LEVEL_ID = '7dl000000000001AAA';
+const LOG_ID = '07L000000000001AAA';
+const HOUR = 60 * 60 * 1000;
+
+/** Answer the queries `ensureDebugLogging` makes, in order, from a script. */
+function debugOrg(over: {
+  flags?: unknown[];
+  level?: boolean;
+  created?: string;
+}): ReturnType<typeof withCalls> {
+  return withCalls((args) => {
+    const q = args[args.indexOf('--query') + 1] ?? '';
+    if (q.startsWith('SELECT Id FROM User')) return { status: 0, result: { records: [{ Id: USER_ID }] } };
+    if (q.includes('FROM TraceFlag')) return { status: 0, result: { records: over.flags ?? [] } };
+    if (q.includes('FROM DebugLevel')) {
+      return { status: 0, result: { records: over.level === false ? [] : [{ Id: LEVEL_ID }] } };
+    }
+    if (args[1] === 'create' || args[1] === 'update') {
+      return { status: 0, result: { id: over.created ?? LEVEL_ID, success: true } };
+    }
+    throw new Error(`unexpected call ${args.join(' ')}`);
+  });
+}
+
+const writes = (calls: string[][]): string[][] => calls.filter((a) => a[0] === 'data' && a[2] === 'record');
+
+test('ensureDebugLogging creates level and flag for a user with none, scoped to that user', async () => {
+  const { svc, calls } = debugOrg({ flags: [], level: false, created: LEVEL_ID });
+  const out = await svc.ensureDebugLogging('u@example.com', HOUR);
+  assert.deepEqual(out, { note: 'trace flag created', relevelled: false });
+  const w = writes(calls);
+  assert.equal(w.length, 2);
+  assert.deepEqual(w[0].slice(0, 6), ['data', 'create', 'record', '--use-tooling-api', '-s', 'DebugLevel']);
+  assert.match(w[0][7], /^DeveloperName=SfTestRunner MasterLabel=SfTestRunner ApexCode=DEBUG /);
+  assert.deepEqual(w[1].slice(0, 6), ['data', 'create', 'record', '--use-tooling-api', '-s', 'TraceFlag']);
+  assert.match(w[1][7], new RegExp(`^TracedEntityId=${USER_ID} DebugLevelId=${LEVEL_ID} LogType=USER_DEBUG StartDate=\\S+ ExpirationDate=\\S+$`));
+  const flagQuery = calls.find((a) => (a[a.indexOf('--query') + 1] ?? '').includes('FROM TraceFlag'))!;
+  assert.match(flagQuery[flagQuery.indexOf('--query') + 1], /TracedEntityId = '005000000000001AAA' AND LogType = 'USER_DEBUG' ORDER BY ExpirationDate DESC NULLS LAST LIMIT 1$/);
+});
+
+test('ensureDebugLogging leaves an active flag on a DEBUG-or-higher level alone', async () => {
+  const flags = [{ Id: FLAG_ID, ExpirationDate: new Date(Date.now() + 3 * HOUR).toISOString(), DebugLevel: { ApexCode: 'FINEST' } }];
+  const { svc, calls } = debugOrg({ flags });
+  assert.deepEqual(await svc.ensureDebugLogging('u@example.com', HOUR), { note: 'trace flag already active', relevelled: false });
+  assert.equal(writes(calls).length, 0);
+});
+
+test('ensureDebugLogging extends an expired flag in place and repoints a too-low level', async () => {
+  const flags = [{ Id: FLAG_ID, ExpirationDate: '2025-07-29T22:29:00.000+0000', DebugLevel: { ApexCode: 'INFO' } }];
+  const { svc, calls } = debugOrg({ flags });
+  const out = await svc.ensureDebugLogging('u@example.com', HOUR);
+  assert.equal(out.relevelled, true);
+  assert.match(out.note, /^trace flag extended, now logging Apex at DEBUG$/);
+  const w = writes(calls);
+  assert.equal(w.length, 1);
+  assert.deepEqual(w[0].slice(0, 8), ['data', 'update', 'record', '--use-tooling-api', '-s', 'TraceFlag', '-i', FLAG_ID]);
+  assert.match(w[0][9], new RegExp(`^StartDate=\\S+ ExpirationDate=\\S+ DebugLevelId=${LEVEL_ID}$`));
+});
+
+test('ensureDebugLogging never asks the org for a window past its 24 h limit', async () => {
+  const { svc, calls } = debugOrg({ flags: [], created: LEVEL_ID });
+  await svc.ensureDebugLogging('u@example.com', 72 * HOUR);
+  const values = writes(calls)[0][7];
+  const start = Date.parse(/StartDate=(\S+)/.exec(values)![1]);
+  const end = Date.parse(/ExpirationDate=(\S+)/.exec(values)![1]);
+  assert.ok(end - start < 24 * HOUR, `window was ${(end - start) / HOUR} h`);
+});
+
+test('ensureDebugLogging escapes the username in the User lookup', async () => {
+  const { svc, calls } = debugOrg({ flags: [{ Id: FLAG_ID, ExpirationDate: new Date(Date.now() + 3 * HOUR).toISOString(), DebugLevel: { ApexCode: 'DEBUG' } }] });
+  await svc.ensureDebugLogging("o'brien@example.com", HOUR);
+  assert.equal(calls[0][calls[0].indexOf('--query') + 1], "SELECT Id FROM User WHERE Username = 'o\\'brien@example.com'");
+  assert.ok(!calls[0].includes('--use-tooling-api'), 'User is a standard object');
+});
+
+test('ensureDebugLogging refuses an id the org returned that is not a Salesforce id', async () => {
+  const { svc } = debugOrg({ flags: [], level: false, created: 'nope' });
+  await assert.rejects(() => svc.ensureDebugLogging('u@example.com', HOUR), SfCliError);
+});
+
+test('getLogIds keys log ids by Cls.method and drops rows whose id is not one', async () => {
+  const { svc, calls } = withCalls(() => ({
+    status: 0,
+    result: {
+      records: [
+        { ApexClass: { Name: 'AcmeTest' }, MethodName: 'testA', ApexLogId: LOG_ID },
+        { ApexClass: { Name: 'AcmeTest' }, MethodName: 'testB', ApexLogId: 'bogus id' },
+      ],
+    },
+  }));
+  const ids = await svc.getLogIds(RUN_ID, 'u@example.com');
+  assert.deepEqual([...ids], [['AcmeTest.testA', LOG_ID]]);
+  assert.match(calls[0][calls[0].indexOf('--query') + 1], /ApexLogId != null$/);
+});
+
+test('getApexLog reads the body from the wrapped and the bare envelope shapes', async () => {
+  const wrapped = withCalls(() => ({ status: 0, result: [{ log: 'A|B' }] }));
+  assert.equal(await wrapped.svc.getApexLog(LOG_ID, 'u@example.com'), 'A|B');
+  assert.deepEqual(wrapped.calls[0].slice(0, 5), ['apex', 'get', 'log', '--log-id', LOG_ID]);
+  const bare = withCalls(() => ({ status: 0, result: ['A|B'] }));
+  assert.equal(await bare.svc.getApexLog(LOG_ID, 'u@example.com'), 'A|B');
+  await assert.rejects(() => withCalls(() => ({ status: 0, result: [] })).svc.getApexLog(LOG_ID, 'u@example.com'), SfCliError);
+  await assert.rejects(() => wrapped.svc.getApexLog('not an id', 'u@example.com'), SfCliError);
+});

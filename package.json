@@ -2,7 +2,7 @@
   "name": "sf-test-runner",
   "displayName": "Salesforce Test Runner",
   "description": "Run Apex tests from a sidebar panel: pick the target org, tick classes and methods across local and org tests, read parsed results with clickable failures, and see coverage in the Coverage view and painted on your editor lines. Every sf CLI command we execute is listed in a collapsible log. Reuses your existing sf CLI auth.",
-  "version": "0.13.0",
+  "version": "0.14.0",
   "publisher": "Skrety",
   "icon": "icons/plugin-icon.png",
   "license": "MIT",
@@ -322,7 +322,7 @@
         "sfTestRunner.runWithLogs": {
           "type": "boolean",
           "default": false,
-          "description": "Keep each test method's debug log (the \"with logs\" chip in the Tests view mirrors this). Before the run the plugin makes sure your user has an active USER_DEBUG trace flag — extending yours, or creating one on an `SfTestRunner` debug level that logs Apex at DEBUG and nothing else."
+          "description": "Keep each test method's debug log (the \"with logs\" chip in the Tests view mirrors this). Before the run the plugin makes sure your user has an active USER_DEBUG trace flag — extending yours, creating one on an `SfTestRunner` debug level that logs Apex at DEBUG and nothing else, or pointing yours at that level when its own would swallow System.debug."
         },
         "sfTestRunner.paintCoverage": {
           "type": "boolean",

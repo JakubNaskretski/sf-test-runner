@@ -418,11 +418,14 @@ export class TestRunner implements vscode.Disposable {
       for (const r of summary.results) {
         r.apexLogId = ids.get(`${r.className}.${r.methodName}`) ?? null;
       }
-      this.deps.output.appendLine(
-        ids.size > 0
-          ? `  ${ids.size} debug log(s) kept — "log" next to a method opens it`
-          : '  no debug logs came back with this run (was the trace flag active?)',
-      );
+      if (ids.size > 0) {
+        this.deps.output.appendLine(`  ${ids.size} debug log(s) kept — "log" next to a method opens it`);
+      } else {
+        // The output channel is hidden by default, so this cannot live only there.
+        const note = 'no debug logs came back with this run — the org keeps none once its log allocation is full, or the trace flag did not cover the run';
+        this.deps.output.appendLine(`  ${note}`);
+        void vscode.window.showWarningMessage(`SF Tests: ${note}.`);
+      }
     } catch (err) {
       const detail = err instanceof Error ? err.message : String(err);
       this.deps.output.appendLine(`  could not look up debug logs: ${detail}`);
@@ -539,7 +542,6 @@ export class TestRunner implements vscode.Disposable {
         startedAt: Date.now(),
         status: 'running',
         withCoverage: coverage,
-        withLogs: logs,
       });
       state.setBusy({ running: true });
       this.deps.revealOutput();
@@ -550,8 +552,19 @@ export class TestRunner implements vscode.Disposable {
         // a reason to say, before the results, that no logs will come with it.
         try {
           const ttl = this.deps.sfCli.testTimeoutMs() + TRACE_FLAG_MARGIN_MS;
-          const note = await this.deps.sfCli.ensureDebugLogging(org.username, ttl);
+          const { note, relevelled } = await this.deps.sfCli.ensureDebugLogging(
+            org.username,
+            ttl,
+            { cancellation: cancellation.token },
+          );
           this.deps.output.appendLine(`  debug logs on: ${note}`);
+          if (relevelled) {
+            // The user's own flag was repointed at our level: say so where
+            // they will see it, since their other log categories went with it.
+            void vscode.window.showInformationMessage(
+              `SF Tests: your trace flag now logs Apex at DEBUG on the SfTestRunner level so System.debug lands; other categories are off.`,
+            );
+          }
         } catch (err) {
           const detail = err instanceof Error ? err.message : String(err);
           this.deps.output.appendLine(`  debug logs OFF for this run — trace flag failed: ${detail}`);
@@ -675,6 +688,9 @@ export class TestRunner implements vscode.Disposable {
   ): void {
     const startedAt = Date.parse(recent.startTime);
     const { status, error } = verdictOf(summary);
+    // A loaded run carries no log ids; drop the previous run's tabs and bodies.
+    this.logCache.clear();
+    this.logDocs.clear();
     this.deps.state.setRun({
       id: recent.testRunId,
       // Named for what it is: a run from the org's history, not one we started.

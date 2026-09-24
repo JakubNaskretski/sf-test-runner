@@ -32,6 +32,16 @@ test('planTraceFlag extends a flag that would expire before the run ceiling', ()
   assert.equal(planTraceFlag(rows, NOW, TTL).action, 'extend');
 });
 
+test('planTraceFlag extends a flag scheduled to start in the future, however long it lasts', () => {
+  const rows = [{
+    Id: '7tf000000000001',
+    StartDate: new Date(NOW + 60_000).toISOString(),
+    ExpirationDate: new Date(NOW + TTL * 3).toISOString(),
+    DebugLevel: DEBUG,
+  }];
+  assert.equal(planTraceFlag(rows, NOW, TTL).action, 'extend');
+});
+
 test('planTraceFlag keeps a flag it extended a moment ago (the margin is slack)', () => {
   const justSet = new Date(NOW + TTL - 5_000).toISOString();
   const rows = [{ Id: '7tf000000000001', ExpirationDate: justSet, DebugLevel: DEBUG }];

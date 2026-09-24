@@ -359,14 +359,19 @@ export class SfCliService {
    * — keep it, extend it, or create it on a plugin-owned `SfTestRunner` debug
    * level (Apex at DEBUG, everything else NONE, so a test's log stays small).
    * A flag on a level that would swallow `System.debug` is repointed at ours.
-   * Returns a one-line note of what it did, for the output channel.
+   * Returns a one-line note of what it did, for the output channel, and whether
+   * the user's own flag was repointed — that one deserves a visible notice.
    */
-  async ensureDebugLogging(orgUsername: string, ttlMs: number): Promise<string> {
+  async ensureDebugLogging(
+    orgUsername: string,
+    ttlMs: number,
+    options: { cancellation?: vscode.CancellationToken } = {},
+  ): Promise<{ note: string; relevelled: boolean }> {
     const user = (
       await this.queryRecords(
         `SELECT Id FROM User WHERE Username = '${soqlString(orgUsername)}'`,
         orgUsername,
-        {},
+        options,
         'standard',
       )
     )[0];
@@ -376,15 +381,18 @@ export class SfCliService {
     // Several flags may coexist with disjoint windows: the latest-expiring one
     // is the one worth keeping or extending, never an arbitrary first row.
     const rows = (await this.queryRecords(
-      'SELECT Id, ExpirationDate, DebugLevel.ApexCode FROM TraceFlag ' +
+      'SELECT Id, StartDate, ExpirationDate, DebugLevel.ApexCode FROM TraceFlag ' +
         `WHERE TracedEntityId = '${userId}' AND LogType = 'USER_DEBUG' ` +
         'ORDER BY ExpirationDate DESC NULLS LAST LIMIT 1',
       orgUsername,
-      {},
+      options,
     )) as TraceFlagRow[];
     const now = Date.now();
     const ttl = Math.min(ttlMs, TRACE_FLAG_MAX_TTL_MS);
     const plan = planTraceFlag(rows, now, ttl);
+    if (plan.action !== 'create' && !ID_RE.test(plan.id)) {
+      throw new SfCliError(`Refusing to update an invalid trace flag id: ${plan.id}`);
+    }
     const window = `StartDate=${new Date(now).toISOString()} ExpirationDate=${new Date(now + ttl).toISOString()}`;
     if (plan.action === 'create') {
       await this.toolingWrite(
@@ -393,55 +401,82 @@ export class SfCliService {
           '-s',
           'TraceFlag',
           '-v',
-          `TracedEntityId=${userId} DebugLevelId=${await this.pluginDebugLevel(orgUsername)} ` +
+          `TracedEntityId=${userId} DebugLevelId=${await this.pluginDebugLevel(orgUsername, options)} ` +
             `LogType=USER_DEBUG ${window}`,
         ],
         orgUsername,
+        options,
       );
-      return 'trace flag created';
+      return { note: 'trace flag created', relevelled: false };
     }
     const values = [
       ...(plan.action === 'extend' ? [window] : []),
-      ...(plan.relevel ? [`DebugLevelId=${await this.pluginDebugLevel(orgUsername)}`] : []),
+      ...(plan.relevel ? [`DebugLevelId=${await this.pluginDebugLevel(orgUsername, options)}`] : []),
     ];
-    if (values.length === 0) return 'trace flag already active';
+    if (values.length === 0) return { note: 'trace flag already active', relevelled: false };
     await this.toolingWrite(
       ['update', '-s', 'TraceFlag', '-i', plan.id, '-v', values.join(' ')],
       orgUsername,
+      options,
     );
-    return plan.action === 'extend'
-      ? `trace flag extended${plan.relevel ? ' and set to Apex DEBUG' : ''}`
-      : 'trace flag set to Apex DEBUG';
+    const extended = plan.action === 'extend' ? 'trace flag extended' : 'trace flag kept';
+    return {
+      note: plan.relevel ? `${extended}, now logging Apex at DEBUG` : extended,
+      relevelled: plan.relevel,
+    };
   }
 
   /** Id of the plugin's `SfTestRunner` debug level, created on first use. */
-  private async pluginDebugLevel(orgUsername: string): Promise<string> {
+  private async pluginDebugLevel(
+    orgUsername: string,
+    options: { cancellation?: vscode.CancellationToken },
+  ): Promise<string> {
     const level = (
       await this.queryRecords(
         "SELECT Id FROM DebugLevel WHERE DeveloperName = 'SfTestRunner'",
         orgUsername,
-        {},
+        options,
       )
     )[0];
-    if (typeof level?.Id === 'string') return level.Id;
-    return this.toolingWrite(
-      [
-        'create',
-        '-s',
-        'DebugLevel',
-        '-v',
-        'DeveloperName=SfTestRunner MasterLabel=SfTestRunner ApexCode=DEBUG ' +
-          'ApexProfiling=NONE Callout=NONE Database=NONE System=NONE Validation=NONE ' +
-          'Visualforce=NONE Workflow=NONE',
-      ],
-      orgUsername,
-    );
+    const id =
+      typeof level?.Id === 'string'
+        ? level.Id
+        : await this.toolingWrite(
+            [
+              'create',
+              '-s',
+              'DebugLevel',
+              '-v',
+              'DeveloperName=SfTestRunner MasterLabel=SfTestRunner ApexCode=DEBUG ' +
+                'ApexProfiling=NONE Callout=NONE Database=NONE System=NONE Validation=NONE ' +
+                'Visualforce=NONE Workflow=NONE',
+            ],
+            orgUsername,
+            options,
+          );
+    if (!ID_RE.test(id)) throw new SfCliError(`The org returned an invalid debug level id: ${id}`);
+    return id;
   }
 
   /** `sf data create|update record --use-tooling-api …`; returns the record id. */
-  private async toolingWrite(rest: string[], orgUsername: string): Promise<string> {
-    const args = ['data', ...rest.slice(0, 1), 'record', '--use-tooling-api', ...rest.slice(1), '--json', '--target-org', orgUsername];
-    const parsed = await this.logged(args, {}, () => this.kit.runJson<any>(args));
+  private async toolingWrite(
+    rest: string[],
+    orgUsername: string,
+    options: { cancellation?: vscode.CancellationToken },
+  ): Promise<string> {
+    const args = [
+      'data',
+      rest[0],
+      'record',
+      '--use-tooling-api',
+      ...rest.slice(1),
+      '--json',
+      '--target-org',
+      orgUsername,
+    ];
+    const parsed = await this.logged(args, {}, () =>
+      this.kit.runJson<any>(args, { signal: toSignal(options.cancellation) }),
+    );
     if (isErrorEnvelope(parsed)) throw envelopeError(parsed, `data ${rest[0]} record`);
     return String(parsed?.result?.id ?? '');
   }
