@@ -19,6 +19,7 @@ import {
 import { mapRunCoverage } from './coverageMapping';
 import { mapTestResult, parseMs } from './resultMapping';
 import { parseStackTrace } from './stackParser';
+import { TRACE_FLAG_MAX_TTL_MS, TraceFlagRow, planTraceFlag } from './debugLogs';
 
 interface RunOptions {
   timeoutMs?: number;
@@ -351,6 +352,172 @@ export class SfCliService {
     } finally {
       await fs.rm(dir, { recursive: true, force: true }).catch(() => undefined);
     }
+  }
+
+  /**
+   * Make sure the running user's USER_DEBUG trace flag covers the next `ttlMs`
+   * — keep it, extend it, or create it on a plugin-owned `SfTestRunner` debug
+   * level (Apex at DEBUG, everything else NONE, so a test's log stays small).
+   * A flag on a level that would swallow `System.debug` is repointed at ours.
+   * Returns a one-line note of what it did, for the output channel, and whether
+   * the user's own flag was repointed — that one deserves a visible notice.
+   */
+  async ensureDebugLogging(
+    orgUsername: string,
+    ttlMs: number,
+    options: { cancellation?: vscode.CancellationToken } = {},
+  ): Promise<{ note: string; relevelled: boolean }> {
+    const user = (
+      await this.queryRecords(
+        `SELECT Id FROM User WHERE Username = '${soqlString(orgUsername)}'`,
+        orgUsername,
+        options,
+        'standard',
+      )
+    )[0];
+    const userId = String(user?.Id ?? '');
+    if (!ID_RE.test(userId)) throw new SfCliError(`No user ${orgUsername} in the org.`);
+
+    // Several flags may coexist with disjoint windows: the latest-expiring one
+    // is the one worth keeping or extending, never an arbitrary first row.
+    const rows = (await this.queryRecords(
+      'SELECT Id, StartDate, ExpirationDate, DebugLevel.ApexCode FROM TraceFlag ' +
+        `WHERE TracedEntityId = '${userId}' AND LogType = 'USER_DEBUG' ` +
+        'ORDER BY ExpirationDate DESC NULLS LAST LIMIT 1',
+      orgUsername,
+      options,
+    )) as TraceFlagRow[];
+    const now = Date.now();
+    const ttl = Math.min(ttlMs, TRACE_FLAG_MAX_TTL_MS);
+    const plan = planTraceFlag(rows, now, ttl);
+    if (plan.action !== 'create' && !ID_RE.test(plan.id)) {
+      throw new SfCliError(`Refusing to update an invalid trace flag id: ${plan.id}`);
+    }
+    const window = `StartDate=${new Date(now).toISOString()} ExpirationDate=${new Date(now + ttl).toISOString()}`;
+    if (plan.action === 'create') {
+      await this.toolingWrite(
+        [
+          'create',
+          '-s',
+          'TraceFlag',
+          '-v',
+          `TracedEntityId=${userId} DebugLevelId=${await this.pluginDebugLevel(orgUsername, options)} ` +
+            `LogType=USER_DEBUG ${window}`,
+        ],
+        orgUsername,
+        options,
+      );
+      return { note: 'trace flag created', relevelled: false };
+    }
+    const values = [
+      ...(plan.action === 'extend' ? [window] : []),
+      ...(plan.relevel ? [`DebugLevelId=${await this.pluginDebugLevel(orgUsername, options)}`] : []),
+    ];
+    if (values.length === 0) return { note: 'trace flag already active', relevelled: false };
+    await this.toolingWrite(
+      ['update', '-s', 'TraceFlag', '-i', plan.id, '-v', values.join(' ')],
+      orgUsername,
+      options,
+    );
+    const extended = plan.action === 'extend' ? 'trace flag extended' : 'trace flag kept';
+    return {
+      note: plan.relevel ? `${extended}, now logging Apex at DEBUG` : extended,
+      relevelled: plan.relevel,
+    };
+  }
+
+  /** Id of the plugin's `SfTestRunner` debug level, created on first use. */
+  private async pluginDebugLevel(
+    orgUsername: string,
+    options: { cancellation?: vscode.CancellationToken },
+  ): Promise<string> {
+    const level = (
+      await this.queryRecords(
+        "SELECT Id, ApexCode FROM DebugLevel WHERE DeveloperName = 'SfTestRunner'",
+        orgUsername,
+        options,
+      )
+    )[0];
+    if (typeof level?.Id === 'string' && level.ApexCode !== 'DEBUG') {
+      // Someone edited our level: put it back, or every "relevel" would land on
+      // a level that swallows System.debug and the user would only ever see empty logs.
+      await this.toolingWrite(
+        ['update', '-s', 'DebugLevel', '-i', level.Id, '-v', 'ApexCode=DEBUG'],
+        orgUsername,
+        options,
+      );
+    }
+    const id =
+      typeof level?.Id === 'string'
+        ? level.Id
+        : await this.toolingWrite(
+            [
+              'create',
+              '-s',
+              'DebugLevel',
+              '-v',
+              'DeveloperName=SfTestRunner MasterLabel=SfTestRunner ApexCode=DEBUG ' +
+                'ApexProfiling=NONE Callout=NONE Database=NONE System=NONE Validation=NONE ' +
+                'Visualforce=NONE Workflow=NONE',
+            ],
+            orgUsername,
+            options,
+          );
+    if (!ID_RE.test(id)) throw new SfCliError(`The org returned an invalid debug level id: ${id}`);
+    return id;
+  }
+
+  /** `sf data create|update record --use-tooling-api …`; returns the record id. */
+  private async toolingWrite(
+    rest: string[],
+    orgUsername: string,
+    options: { cancellation?: vscode.CancellationToken },
+  ): Promise<string> {
+    const args = [
+      'data',
+      rest[0],
+      'record',
+      '--use-tooling-api',
+      ...rest.slice(1),
+      '--json',
+      '--target-org',
+      orgUsername,
+    ];
+    const parsed = await this.logged(args, {}, () =>
+      this.kit.runJson<any>(args, { signal: toSignal(options.cancellation) }),
+    );
+    if (isErrorEnvelope(parsed)) throw envelopeError(parsed, `data ${rest[0]} record`);
+    return String(parsed?.result?.id ?? '');
+  }
+
+  /** `Cls.method` → ApexLogId for every method of the run that kept a log. */
+  async getLogIds(testRunId: string, orgUsername: string): Promise<Map<string, string>> {
+    const id = assertRunId(testRunId);
+    const rows = await this.queryRecords(
+      'SELECT ApexClass.Name, MethodName, ApexLogId FROM ApexTestResult ' +
+        `WHERE AsyncApexJobId = '${id}' AND ApexLogId != null`,
+      orgUsername,
+      {},
+    );
+    const ids = new Map<string, string>();
+    for (const row of rows) {
+      const logId = String(row?.ApexLogId ?? '');
+      if (ID_RE.test(logId)) ids.set(`${row?.ApexClass?.Name}.${row?.MethodName}`, logId);
+    }
+    return ids;
+  }
+
+  /** The raw body of one debug log. */
+  async getApexLog(logId: string, orgUsername: string): Promise<string> {
+    if (!ID_RE.test(logId)) throw new SfCliError(`Refusing to fetch an invalid log id: ${logId}`);
+    const args = ['apex', 'get', 'log', '--log-id', logId, '--json', '--target-org', orgUsername];
+    const parsed = await this.logged(args, {}, () => this.kit.runJson<any>(args));
+    if (isErrorEnvelope(parsed)) throw envelopeError(parsed, 'apex get log');
+    // 2.137.7 answers `result: [{ log: "<body>" }]`; older builds answered a bare string.
+    const first = Array.isArray(parsed?.result) ? parsed.result[0] : parsed?.result;
+    const body = typeof first === 'string' ? first : first?.log;
+    if (typeof body !== 'string') throw new SfCliError('The CLI returned no log body.');
+    return body;
   }
 
   /** One SOQL query through the CLI, with the error-envelope discipline every
@@ -693,6 +860,11 @@ export class SfCliService {
 
 /** Salesforce ids as they appear in a run envelope: 15 or 18 alphanumerics. */
 const ID_RE = /^[A-Za-z0-9]{15,18}$/;
+
+/** Escape a value for a single-quoted SOQL literal. */
+function soqlString(value: string): string {
+  return value.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+}
 
 /** Ids are spliced into SOQL. Ours come from the CLI's own start envelope, so
  *  anything that is not a Salesforce id is a bug or a tampered response — not

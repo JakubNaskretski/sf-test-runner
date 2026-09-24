@@ -73,6 +73,7 @@ export class PanelState implements vscode.Disposable {
       vscode.workspace.onDidChangeConfiguration((e) => {
         if (
           e.affectsConfiguration(`${CONFIG_SECTION}.runWithCoverage`) ||
+          e.affectsConfiguration(`${CONFIG_SECTION}.runWithLogs`) ||
           e.affectsConfiguration(`${CONFIG_SECTION}.paintCoverage`)
         ) {
           this.emitter.fire('prefs');
@@ -242,6 +243,14 @@ export class PanelState implements vscode.Disposable {
     await this.writeSetting('runWithCoverage', on);
   }
 
+  get runWithLogs(): boolean {
+    return this.config().get<boolean>('runWithLogs', false);
+  }
+
+  async setRunWithLogs(on: boolean): Promise<void> {
+    await this.writeSetting('runWithLogs', on);
+  }
+
   get paintCoverage(): boolean {
     return this.config().get<boolean>('paintCoverage', true);
   }
@@ -285,6 +294,7 @@ export class PanelState implements vscode.Disposable {
       orgs: this._orgs.map((o): OrgOption => ({ ...o, badge: orgBadge(o) })),
       busy: this._busy,
       runWithCoverage: this.runWithCoverage,
+      runWithLogs: this.runWithLogs,
       progress,
       outcomes: this.outcomes(),
     };

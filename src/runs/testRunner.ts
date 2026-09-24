@@ -22,6 +22,7 @@
  */
 import * as vscode from 'vscode';
 import { isLikelyProduction } from '../kit/orgs';
+import { TRACE_FLAG_MARGIN_MS, debugLogDocument } from '../salesforce/debugLogs';
 import { RunGuard } from '../runGuard';
 import { overallCoveragePercent } from '../salesforce/coverageMapping';
 import {
@@ -81,6 +82,11 @@ export class TestRunner implements vscode.Disposable {
    *  undefined until the start call comes back with one. */
   private active: { orgUsername: string; testRunId?: string } | undefined;
   private sequence = 0;
+  /** Log bodies already fetched for the current run, by ApexLogId. */
+  private readonly logCache = new Map<string, string>();
+  /** The untitled tab each log was opened in, so a second click focuses it
+   *  instead of minting another dirty document. */
+  private readonly logDocs = new Map<string, vscode.TextDocument>();
 
   constructor(private readonly deps: TestRunnerDeps) {}
 
@@ -401,6 +407,66 @@ export class TestRunner implements vscode.Disposable {
     );
   }
 
+  /** Mark each result with its ApexLogId, or say why none came. */
+  private async attachLogIds(
+    summary: TestRunSummary,
+    testRunId: string,
+    orgUsername: string,
+  ): Promise<void> {
+    try {
+      const ids = await this.deps.sfCli.getLogIds(testRunId, orgUsername);
+      for (const r of summary.results) {
+        r.apexLogId = ids.get(`${r.className}.${r.methodName}`) ?? null;
+      }
+      if (ids.size > 0) {
+        this.deps.output.appendLine(`  ${ids.size} debug log(s) kept — "log" next to a method opens it`);
+      } else if (summary.results.length > 0) {
+        // The output channel is hidden by default, so this cannot live only there.
+        const note = 'no debug logs came back with this run — the org keeps none once its log allocation is full, or the trace flag did not cover the run';
+        this.deps.output.appendLine(`  ${note}`);
+        void vscode.window.showWarningMessage(`SF Tests: ${note}.`);
+      }
+    } catch (err) {
+      const detail = err instanceof Error ? err.message : String(err);
+      this.deps.output.appendLine(`  could not look up debug logs: ${detail}`);
+      void vscode.window.showWarningMessage(`SF Tests: the run finished but its debug logs could not be looked up. ${detail}`);
+    }
+  }
+
+  /** Open one method's debug log in an editor tab: debug lines first, then the whole log. */
+  async showLog(className: string, methodName: string): Promise<void> {
+    const run = this.deps.state.run;
+    const result = run?.summary?.results.find(
+      (r) => r.className === className && r.methodName === methodName,
+    );
+    if (!run || !result?.apexLogId) {
+      void vscode.window.showInformationMessage(`No debug log for ${className}.${methodName}.`);
+      return;
+    }
+    const logId = result.apexLogId;
+    try {
+      let raw = this.logCache.get(logId);
+      if (raw === undefined) {
+        raw = await vscode.window.withProgress(
+          { location: vscode.ProgressLocation.Notification, title: `Fetching log for ${methodName}…` },
+          () => this.deps.sfCli.getApexLog(logId, run.orgUsername),
+        );
+        this.logCache.set(logId, raw);
+      }
+      let doc = this.logDocs.get(logId);
+      if (!doc || doc.isClosed) {
+        doc = await vscode.workspace.openTextDocument({
+          content: debugLogDocument(`${className}.${methodName} — ${run.orgAlias} · ${logId}`, raw),
+          language: 'log',
+        });
+        this.logDocs.set(logId, doc);
+      }
+      await vscode.window.showTextDocument(doc, { preview: true });
+    } catch (err) {
+      this.handleError(err);
+    }
+  }
+
   /** Put the current run's summary on the clipboard. */
   async copySummary(): Promise<void> {
     const run = this.deps.state.run;
@@ -459,6 +525,9 @@ export class TestRunner implements vscode.Disposable {
     const state = this.deps.state;
     const id = `run-${++this.sequence}-${Date.now()}`;
     const label = labelFor(org.alias);
+    const logs = state.runWithLogs;
+    this.logCache.clear();
+    this.logDocs.clear();
     // Everything after the acquire lives in the try: a throw between claiming
     // the guard and entering it would hold the single-run lock until a reload.
     const cancellation = new vscode.CancellationTokenSource();
@@ -477,6 +546,35 @@ export class TestRunner implements vscode.Disposable {
       state.setBusy({ running: true });
       this.deps.revealOutput();
       this.deps.output.appendLine(`▶ Running ${label} (${org.username})…`);
+
+      let logsArmed = false;
+      if (logs) {
+        // A flag that fails to land is not a reason to lose the run — but it is
+        // a reason to say, before the results, that no logs will come with it.
+        try {
+          const ttl = this.deps.sfCli.testTimeoutMs() + TRACE_FLAG_MARGIN_MS;
+          const { note, relevelled } = await this.deps.sfCli.ensureDebugLogging(
+            org.username,
+            ttl,
+            { cancellation: cancellation.token },
+          );
+          this.deps.output.appendLine(`  debug logs on: ${note}`);
+          logsArmed = true;
+          if (relevelled) {
+            // The user's own flag was repointed at our level: say so where
+            // they will see it, since their other log categories went with it.
+            void vscode.window.showInformationMessage(
+              `SF Tests: your trace flag now logs Apex at DEBUG on the SfTestRunner level so System.debug lands; other categories are off.`,
+            );
+          }
+        } catch (err) {
+          const detail = err instanceof Error ? err.message : String(err);
+          this.deps.output.appendLine(`  debug logs OFF for this run — trace flag failed: ${detail}`);
+          void vscode.window.showWarningMessage(
+            `SF Tests: could not set up debug logging, running without logs. ${detail}`,
+          );
+        }
+      }
 
       const { testRunId } = await startRun(org.username, cancellation.token);
       // Recorded before the first poll: this id is what a cancel aborts, and
@@ -535,6 +633,9 @@ export class TestRunner implements vscode.Disposable {
       const result = await this.deps.sfCli.getTestRun(testRunId, org.username, {
         cancellation: cancellation.token,
       });
+      // Only once the flag landed: a failed setup already warned, and a second
+      // "no logs" toast for the same cause would just be noise.
+      if (logsArmed) await this.attachLogIds(result.summary, testRunId, org.username);
       const { status, error } = verdictOf(result.summary);
       state.updateRun({
         status,
@@ -591,6 +692,9 @@ export class TestRunner implements vscode.Disposable {
   ): void {
     const startedAt = Date.parse(recent.startTime);
     const { status, error } = verdictOf(summary);
+    // A loaded run carries no log ids; drop the previous run's tabs and bodies.
+    this.logCache.clear();
+    this.logDocs.clear();
     this.deps.state.setRun({
       id: recent.testRunId,
       // Named for what it is: a run from the org's history, not one we started.

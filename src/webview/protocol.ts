@@ -74,6 +74,7 @@ export interface TestsViewState {
   orgs: OrgOption[];
   busy: TestsBusy;
   runWithCoverage: boolean;
+  runWithLogs: boolean;
   progress?: TestsProgress;
   /** Selection key → last known outcome. Empty before the first run. */
   outcomes: Record<string, OutcomeEntry>;
@@ -95,6 +96,7 @@ export type TestsViewMessage =
   | { type: 'tests:activeFile' }
   | { type: 'tests:open'; name: string; method?: string }
   | { type: 'tests:setRunWithCoverage'; on: boolean }
+  | { type: 'tests:setRunWithLogs'; on: boolean }
   | { type: 'tests:ready' };
 
 // ───────────────────────────── results view ─────────────────────────────
@@ -120,6 +122,7 @@ export type ResultsViewMessage =
   | { type: 'results:setFilter'; filter: ResultsFilter }
   | { type: 'results:rerunFailed' }
   | { type: 'results:copySummary' }
+  | { type: 'results:showLog'; className: string; methodName: string }
   | { type: 'results:loadRecent' }
   | { type: 'results:ready' };
 
@@ -198,6 +201,7 @@ export const TESTS_MESSAGE_SHAPES: Record<TestsViewMessage['type'], MessageShape
   'tests:activeFile': { type: 'string' },
   'tests:open': { type: 'string', name: 'string', method: 'string?' },
   'tests:setRunWithCoverage': { type: 'string', on: 'boolean' },
+  'tests:setRunWithLogs': { type: 'string', on: 'boolean' },
   'tests:ready': { type: 'string' },
 };
 
@@ -212,6 +216,7 @@ export const RESULTS_MESSAGE_SHAPES: Record<ResultsViewMessage['type'], MessageS
   'results:setFilter': { type: 'string', filter: 'string' },
   'results:rerunFailed': { type: 'string' },
   'results:copySummary': { type: 'string' },
+  'results:showLog': { type: 'string', className: 'string', methodName: 'string' },
   'results:loadRecent': { type: 'string' },
   'results:ready': { type: 'string' },
 };

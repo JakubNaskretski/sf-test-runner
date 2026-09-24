@@ -2,6 +2,11 @@
 
 All notable changes to the "sf-test-runner" extension are documented here.
 
+## [0.14.0] - 2026-09-24
+
+- **See what a test's `System.debug` printed.** A new **with logs** checkbox in the Tests view (setting `sfTestRunner.runWithLogs`, off by default) keeps each test method's debug log. After the run, a small **log** button next to every method that has one opens it in an editor tab: the `System.debug` lines first, each with its source line and level, then the full log underneath — easy to read, one Ctrl+A to copy, Save As if you want a file. Nothing is written to disk on its own, and clicking again brings back the same tab.
+- **The trace flag is handled for you.** Salesforce only keeps a test's log while your user has an active USER_DEBUG trace flag, so with the checkbox on the plugin checks yours before the run: an active one is left alone, an expired one is extended for the run's ceiling plus five minutes, and a missing one is created on a small `SfTestRunner` debug level that logs Apex at DEBUG and nothing else. A flag whose level would swallow `System.debug` is pointed at that level. This is the first time the plugin writes anything to an org — two configuration records, the same ones the Developer Console creates, and it happens only when **with logs** is ticked, in a production org too. If the flag cannot be set up the run still goes ahead and a warning says it runs without logs.
+
 ## [0.13.0] - 2026-09-24
 
 - **Copy in the Results view now carries the stack trace.** Each failure line is followed by every frame of its stack, indented, so the copied summary pastes straight into a ticket or an AI assistant with the class, method and line where the test broke. The view itself is unchanged — frames still show only when you expand the failing class.

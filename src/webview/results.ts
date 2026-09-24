@@ -413,6 +413,19 @@ function methodRow(group: ClassGroup, result: TestMethodResult): HTMLElement {
   if (result.outcome === 'CompileFail') {
     children.push(el('span', { class: 'badge b-warn', text: 'CompileFail' }));
   }
+  if (result.apexLogId) {
+    const log = el('button', {
+      type: 'button',
+      class: 'subtle-btn',
+      title: 'Open this method\'s debug log',
+      text: 'log',
+    });
+    log.addEventListener('click', (event) => {
+      event.stopPropagation();
+      api.post({ type: 'results:showLog', className: group.name, methodName: result.methodName });
+    });
+    children.push(log);
+  }
   children.push(
     el('span', { class: 'ms', text: result.runTime > 0 ? fmtMs(result.runTime) : '—' }),
   );

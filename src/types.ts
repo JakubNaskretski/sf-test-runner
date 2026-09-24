@@ -19,6 +19,8 @@ export interface TestMethodResult {
   runTime: number;
   message: string | null;
   stackTrace: string | null;
+  /** The method's own debug log, when the run asked for logs and the org kept one. */
+  apexLogId?: string | null;
 }
 
 export interface TestRunSummary {
