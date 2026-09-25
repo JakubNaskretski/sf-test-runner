@@ -12,7 +12,10 @@ const SHARED_KEY = 'skrety.salesforce.targetOrg';
 const SYNC_KEY = 'sfTestRunner.syncOrgWithFamily';
 const PRIVATE_KEY = 'sfTestRunner.lastSelectedOrgUsername';
 const MIGRATED_KEY = 'sfTestRunner.orgSyncMigrated.v1';
+const ORG_PORTED_KEY = 'sfTestRunner.orgPortedFromGlobal.v1';
 const ORG_LIST_CACHE_KEY = 'sfTestRunner.cachedOrgList';
+/** What a pre-split release left in globalState under the private key. */
+const LEGACY_USERNAME = 'legacy@acme.example';
 
 const settings = new Map<string, unknown>();
 let configListeners: ((e: { affectsConfiguration: (k: string) => boolean }) => void)[] = [];
@@ -159,6 +162,14 @@ function memento(seed: Record<string, unknown> = {}): vscodeMemento {
 }
 type vscodeMemento = import('vscode').Memento;
 
+/** A WINDOW store: the same in-memory Memento without the machine-wide org-list
+ *  cache, so a test can tell which of the two mementos a value landed in. */
+function windowMemento(seed: Record<string, unknown> = {}): vscodeMemento {
+  const m = memento(seed);
+  void m.update(ORG_LIST_CACHE_KEY, undefined);
+  return m;
+}
+
 /** sfCli stand-in: the picker only sets/reads the current org and lists orgs. */
 function fakeCli(orgs: OrgInfo[] = [DEV, QA]): any {
   let current: OrgInfo | undefined;
@@ -171,9 +182,15 @@ function fakeCli(orgs: OrgInfo[] = [DEV, QA]): any {
   };
 }
 
-/** Build a picker and collect every onOrgChanged payload it fires. */
+/** Build a picker and collect every onOrgChanged payload it fires.
+ *
+ *  These cases are about sync semantics, not storage scope, so one memento stands
+ *  in for both — as globalState (org-list cache, migration flag) and as this
+ *  window's workspaceState (the target org) — which keeps every seed and assertion
+ *  below reading a single store. The scope split itself is covered by the last test
+ *  in this file, which passes two distinct mementos. */
 function makePicker(state: vscodeMemento, cli: any = fakeCli()) {
-  const picker = new mod.OrgPicker(cli, state);
+  const picker = new mod.OrgPicker(cli, state, state);
   const fired: (OrgInfo | undefined)[] = [];
   picker.onOrgChanged((o) => fired.push(o));
   return { picker, fired, cli };
@@ -352,4 +369,217 @@ test('sync on at startup adopts a family org that moved on', async () => {
   assert.equal(state.get(PRIVATE_KEY), QA.username);
   assert.deepEqual(fired.map((o) => o?.username), [QA.username]);
   picker.dispose();
+});
+
+test('the target org is window-scoped: only workspaceState holds it, only globalState the flag', async () => {
+  // The bug this split fixes: one machine-wide key meant a second window ran its
+  // tests against the org last picked in the first. The org-list cache and the
+  // one-time migration flag are right to share, so they must stay behind.
+  const globalState = memento();
+  const workspaceState = memento();
+  await workspaceState.update(ORG_LIST_CACHE_KEY, undefined); // this window starts bare
+
+  const picker = new mod.OrgPicker(fakeCli(), globalState, workspaceState);
+  await picker.autoSelectDefault();       // startup: stamps the flag, falls back to DEV
+  const closed = picker.showPicker();
+  quickPicks[0].pick(QA.username);        // and a hand-made pick on top
+  await closed;
+
+  assert.equal(workspaceState.get(PRIVATE_KEY), QA.username);
+  assert.equal(
+    globalState.get(PRIVATE_KEY),
+    undefined,
+    'the target org must never reach globalState — that is what leaked between windows',
+  );
+  assert.equal(globalState.get(MIGRATED_KEY), true);
+  assert.equal(
+    workspaceState.get(MIGRATED_KEY),
+    undefined,
+    'the migration flag is once per install, not once per window',
+  );
+  assert.ok(Array.isArray(globalState.get(ORG_LIST_CACHE_KEY)), 'the org list stays machine-wide');
+  assert.equal(workspaceState.get(ORG_LIST_CACHE_KEY), undefined);
+  picker.dispose();
+});
+
+test('a window with no org of its own opens on the legacy globalState org', async () => {
+  // Without this the upgrade would drop every window onto the CLI default org —
+  // which may be production — with nothing on screen to say so.
+  const globalState = memento({ [PRIVATE_KEY]: LEGACY_USERNAME });
+  const workspaceState = windowMemento();
+  const cli = fakeCli();
+
+  const picker = new mod.OrgPicker(cli, globalState, workspaceState);
+  await picker.autoSelectDefault();
+
+  assert.equal(
+    cli.getCurrentOrg()?.username,
+    LEGACY_USERNAME,
+    'the upgrade must not silently retarget this window to the CLI default org',
+  );
+  assert.equal(
+    workspaceState.get(PRIVATE_KEY),
+    LEGACY_USERNAME,
+    'the ported value has to LAND in this window store, not just in memory',
+  );
+  assert.equal(
+    globalState.get(PRIVATE_KEY),
+    LEGACY_USERNAME,
+    'the legacy value is read once and left alone — other open windows still need it',
+  );
+  assert.equal(globalState.get(MIGRATED_KEY), true);
+  picker.dispose();
+});
+
+test('a window that already has its own org ignores the legacy globalState value', async () => {
+  const globalState = memento({ [PRIVATE_KEY]: LEGACY_USERNAME, [MIGRATED_KEY]: true });
+  const workspaceState = windowMemento({ [PRIVATE_KEY]: QA.username });
+  const cli = fakeCli();
+
+  const picker = new mod.OrgPicker(cli, globalState, workspaceState);
+  await picker.autoSelectDefault();
+
+  assert.equal(
+    cli.getCurrentOrg()?.username,
+    QA.username,
+    'the window store wins over the legacy machine-wide org',
+  );
+  assert.equal(workspaceState.get(PRIVATE_KEY), QA.username);
+  assert.equal(globalState.get(PRIVATE_KEY), LEGACY_USERNAME, 'and the legacy value stays put');
+  picker.dispose();
+});
+
+test('a fresh window does not think it is already on the legacy machine-wide org', async () => {
+  // Read-side pin, with no startup involved: the constructor reads the WINDOW
+  // store and nothing else. Were it to fall back to globalState, this pick would
+  // register as "re-picking the org we're already on" — no switch event, nothing
+  // written, and the window would sit on an org it was never given.
+  const globalState = memento({ [PRIVATE_KEY]: QA.username, [MIGRATED_KEY]: true });
+  const workspaceState = windowMemento();
+  const cli = fakeCli();
+
+  const picker = new mod.OrgPicker(cli, globalState, workspaceState);
+  const fired: (OrgInfo | undefined)[] = [];
+  picker.onOrgChanged((o) => fired.push(o));
+
+  const closed = picker.showPicker();
+  quickPicks[0].pick(QA.username);
+  await closed;
+
+  assert.deepEqual(
+    fired.map((o) => o?.username),
+    [QA.username],
+    'picking an org this window has never held is a real switch, not a no-op',
+  );
+  assert.equal(
+    workspaceState.get(PRIVATE_KEY),
+    QA.username,
+    'and it has to be recorded in the window store',
+  );
+  picker.dispose();
+});
+
+test('a window ports the legacy org at most once — a cleared org is not resurrected', async () => {
+  // The cycle to prevent: the org's auth expires, startup reconciliation clears
+  // the target, and the next reload ports the dead legacy org straight back in.
+  const globalState = memento({ [PRIVATE_KEY]: LEGACY_USERNAME });
+  const workspaceState = windowMemento();
+
+  const first = new mod.OrgPicker(fakeCli(), globalState, workspaceState);
+  await first.autoSelectDefault();
+  assert.equal(workspaceState.get(PRIVATE_KEY), LEGACY_USERNAME, 'the first activation ports it forward');
+  assert.equal(workspaceState.get(ORG_PORTED_KEY), true, 'and stamps this window, so it happens once');
+  first.dispose();
+
+  // The org goes away for real and the target is cleared.
+  await workspaceState.update(PRIVATE_KEY, undefined);
+
+  const cli = fakeCli();
+  const second = new mod.OrgPicker(cli, globalState, workspaceState);
+  await second.autoSelectDefault();
+
+  assert.equal(
+    cli.getCurrentOrg()?.username,
+    DEV.username,
+    'the reload must take the ordinary CLI-default fallback, not resurrect the dead legacy org',
+  );
+  assert.equal(workspaceState.get(PRIVATE_KEY), DEV.username);
+  assert.equal(globalState.get(PRIVATE_KEY), LEGACY_USERNAME, 'and the legacy value is still left alone');
+  second.dispose();
+});
+
+test('the port-forward stamp is per window and stamped even with nothing to port', async () => {
+  const globalState = memento();
+  const workspaceState = windowMemento();
+
+  const picker = new mod.OrgPicker(fakeCli(), globalState, workspaceState);
+  await picker.autoSelectDefault();
+
+  assert.equal(
+    workspaceState.get(ORG_PORTED_KEY),
+    true,
+    "an empty hop still counts as this window's one hop",
+  );
+  assert.equal(
+    globalState.get(ORG_PORTED_KEY),
+    undefined,
+    'the stamp is per window — it must never reach globalState',
+  );
+  picker.dispose();
+});
+
+test('a legacy value that is not a usable username is ignored', async () => {
+  // Storage from an older release, editable by hand: anything that is not a
+  // real username must be passed over, not targeted.
+  for (const junk of [42, { username: DEV.username }, ['x'], true, '   ']) {
+    const globalState = memento({ [PRIVATE_KEY]: junk });
+    const workspaceState = windowMemento();
+    const cli = fakeCli();
+
+    const picker = new mod.OrgPicker(cli, globalState, workspaceState);
+    await picker.autoSelectDefault();
+
+    assert.equal(
+      cli.getCurrentOrg()?.username,
+      DEV.username,
+      `legacy ${JSON.stringify(junk)} must be ignored in favour of the ordinary fallback`,
+    );
+    assert.equal(workspaceState.get(ORG_PORTED_KEY), true, 'and the window is still stamped');
+    picker.dispose();
+  }
+});
+
+test('the one-time family adoption lands in the window store, its flag in globalState', async () => {
+  settings.set(SHARED_KEY, QA.username);
+  const globalState = memento();
+  const workspaceState = windowMemento();
+  const cli = fakeCli();
+
+  const picker = new mod.OrgPicker(cli, globalState, workspaceState);
+  await picker.autoSelectDefault();
+
+  assert.equal(workspaceState.get(PRIVATE_KEY), QA.username, 'the adopted org belongs to this window');
+  assert.equal(globalState.get(MIGRATED_KEY), true, 'the flag is once per install, so it stays machine-wide');
+  assert.equal(
+    globalState.get(PRIVATE_KEY),
+    undefined,
+    'the adopted org must never be written back to globalState',
+  );
+  picker.dispose();
+});
+
+test('extension wiring: the org list cache is machine-wide, the target org per window', async () => {
+  // Source pin: the two optional mementos are adjacent — swapping them compiles
+  // and passes every unit test while silently making the org machine-wide again.
+  const { readFileSync } = await import('node:fs');
+  const { join } = await import('node:path');
+  const src = readFileSync(join(process.cwd(), 'src', 'extension.ts'), 'utf8');
+  assert.ok(
+    src.includes('new OrgPicker(sfCli, context.globalState, context.workspaceState)'),
+    'extension.ts must pass globalState (org-list cache + migration flag) AND workspaceState (this window\'s target org)',
+  );
+  assert.ok(
+    !src.includes('new OrgPicker(sfCli, context.globalState)'),
+    'extension.ts must not build the picker on globalState alone — the target org would leak between windows again',
+  );
 });

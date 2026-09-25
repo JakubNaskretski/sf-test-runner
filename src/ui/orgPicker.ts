@@ -13,13 +13,23 @@ interface OrgQuickPickItem extends vscode.QuickPickItem {
  *  picker opens instantly (even in a fresh window) while a live list loads. */
 const ORG_LIST_CACHE_KEY = 'sfTestRunner.cachedOrgList';
 
-/** globalState key holding THIS plugin's own target org — the source of truth,
- *  rewritten on every applied org change (pick, family follow, startup). */
+/** workspaceState key holding THIS plugin's own target org — the source of truth,
+ *  rewritten on every applied org change (pick, family follow, startup). Scoped to
+ *  the WINDOW, so two windows on two projects run against two orgs. The key NAME is
+ *  unchanged, which is what lets `resolveStartupOrg` port the value older releases
+ *  wrote under it in globalState forward into each window once; globalState is a
+ *  separate memento, so the two never collide. */
 const LAST_SELECTED_ORG_KEY = 'sfTestRunner.lastSelectedOrgUsername';
 
 /** globalState flag for the one-time "adopt the family org into our own store"
- *  migration run when upgrading from the always-shared releases. */
+ *  migration run when upgrading from the always-shared releases. Install-wide even
+ *  though the org is per window: it may only ever run once. */
 const ORG_SYNC_MIGRATED_KEY = 'sfTestRunner.orgSyncMigrated.v1';
+
+/** Per-WINDOW marker: this window has had its one shot at the legacy globalState
+ *  org (see `resolveStartupOrg`). Lives in workspaceState beside the org it
+ *  guards, and is stamped whether or not anything moved. */
+const ORG_PORTED_KEY = 'sfTestRunner.orgPortedFromGlobal.v1';
 
 /** Opt-in switch for following/publishing the family-shared org. Default off. */
 const SYNC_SETTING = 'sfTestRunner.syncOrgWithFamily';
@@ -27,8 +37,9 @@ const SYNC_SETTING = 'sfTestRunner.syncOrgWithFamily';
 /**
  * Target-org selection for the test runner.
  *
- * This plugin keeps its OWN org in the private globalState key
- * `sfTestRunner.lastSelectedOrgUsername`; that key is the source of truth and is
+ * This plugin keeps its OWN org in the private workspaceState key
+ * `sfTestRunner.lastSelectedOrgUsername` — per VS Code window, and VS Code never
+ * propagates workspaceState between windows; that key is the source of truth and is
  * rewritten on every applied change. Following (and publishing) the
  * family-shared setting `skrety.salesforce.targetOrg` is opt-in per plugin via
  * `sfTestRunner.syncOrgWithFamily` (default OFF):
@@ -72,7 +83,7 @@ export class OrgPicker implements vscode.Disposable {
    *  status-bar label without a fetch. */
   private knownOrgs: OrgInfo[] = [];
 
-  /** In-memory mirror of the private globalState key: what THIS plugin targets.
+  /** In-memory mirror of the private workspaceState key: what THIS plugin targets.
    *  Read synchronously for the picker's "• current" marker and for the
    *  shared-watcher de-dup, so an adopt can't race the persisted write. */
   private privateOrg: string | undefined;
@@ -89,9 +100,14 @@ export class OrgPicker implements vscode.Disposable {
    *  (status-bar double-click) and to retarget refresh results. */
   private activePick: vscode.QuickPick<OrgQuickPickItem> | undefined;
 
+  /** `globalState` is machine-wide and holds only what is right to share between
+   *  windows — the org-list cache and the one-time migration flag. `workspaceState`
+   *  is THIS window's and holds the target org. Both stay optional: without them the
+   *  picker still works, just session-only. */
   constructor(
     private readonly sfCli: SfCliService,
     private readonly globalState?: vscode.Memento,
+    private readonly workspaceState?: vscode.Memento,
   ) {
     // Seed from the persisted copy; drop malformed entries rather than let a
     // corrupt cache break the picker (it self-heals on the next fetch).
@@ -106,7 +122,7 @@ export class OrgPicker implements vscode.Disposable {
       );
     }
 
-    this.privateOrg = globalState?.get<string>(LAST_SELECTED_ORG_KEY);
+    this.privateOrg = workspaceState?.get<string>(LAST_SELECTED_ORG_KEY);
 
     this.statusBar = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 100);
     this.statusBar.command = 'sfTestRunner.selectOrg';
@@ -146,12 +162,16 @@ export class OrgPicker implements vscode.Disposable {
     this.applyUsername(username);
   }
 
-  /** Record the plugin's own target org. The in-memory copy updates
-   *  synchronously; the persist is fire-and-forget (a storage failure only costs
-   *  the remembered org on the next start). */
-  private persistPrivateOrg(username: string | undefined): void {
+  /** Record the plugin's own target org, in THIS window's workspaceState. The
+   *  in-memory copy updates synchronously, so the UI paths can ignore the result
+   *  and let the write land in its own time (a storage failure only costs the
+   *  remembered org on the next start — hence the swallow, so this never rejects).
+   *  The returned promise settles once the write is through: the startup path
+   *  awaits it, so a crash can't stamp the once-per-install flag while the org it
+   *  just adopted is still in flight. */
+  private persistPrivateOrg(username: string | undefined): Thenable<void> | undefined {
     this.privateOrg = username;
-    this.globalState?.update(LAST_SELECTED_ORG_KEY, username).then(undefined, () => {});
+    return this.workspaceState?.update(LAST_SELECTED_ORG_KEY, username).then(undefined, () => {});
   }
 
   /** Update the in-memory + persisted org cache (persist is fire-and-forget; a
@@ -405,18 +425,47 @@ export class OrgPicker implements vscode.Disposable {
   /**
    * Settle which org this plugin starts on, before any list work.
    *
+   * (a0) Port forward the legacy org, at most ONCE per window: releases before
+   *     the per-window split kept the target in globalState under the SAME key. A
+   *     window whose own store is still empty adopts it, so an upgrade changes
+   *     nothing the user can see — without this every window would fall back to
+   *     the CLI default org, which may well be production, and say nothing about
+   *     it. The hop is stamped in the window store, and stamped even when there
+   *     was nothing to port, because "empty" is also what a deliberately cleared
+   *     target looks like: once an org's auth expires or it leaves the list, an
+   *     unstamped port would drag the dead org back in on every reload. The org is
+   *     written BEFORE the stamp, so a crash between the two costs nothing but
+   *     another attempt. The global value is only ever READ: other windows of this
+   *     install need it too.
    * (a) One-time migration off the always-shared releases: the first activation
    *     that finds the flag unset adopts the family org into our private key, so
    *     an upgrade doesn't silently jump back to a long-frozen private value.
    *     Runs regardless of the sync flag; the flag is then set for good, so a
    *     family org set later is never adopted behind a user who keeps sync off.
+   *     The flag is install-wide while the org is per window, so this adoption
+   *     lands in the FIRST window that activates; later windows open on the org
+   *     (a0) ported forward, or on their own last pick.
    * (b) With sync on, a family org that has moved on since our last run wins.
    */
   private async resolveStartupOrg(): Promise<string | undefined> {
+    if (!this.workspaceState?.get<boolean>(ORG_PORTED_KEY)) {
+      if (!this.privateOrg) {
+        // Read defensively: storage written by an older release, editable by
+        // hand, so it may hold anything at all.
+        const legacy = this.globalState?.get<unknown>(LAST_SELECTED_ORG_KEY);
+        if (typeof legacy === 'string' && legacy.trim()) await this.persistPrivateOrg(legacy.trim());
+      }
+      // Swallowed like every other persist: a failed stamp only costs another
+      // (harmless) port attempt next start, it must not abandon startup.
+      await this.workspaceState?.update(ORG_PORTED_KEY, true).then(undefined, () => {});
+    }
+
     const shared = getSharedOrg();
     if (!this.globalState?.get<boolean>(ORG_SYNC_MIGRATED_KEY)) {
-      if (shared) this.persistPrivateOrg(shared);
-      await this.globalState?.update(ORG_SYNC_MIGRATED_KEY, true);
+      // Awaited, both of them: this runs once per install, so a crash between the
+      // two writes would stamp the flag and lose the org it just adopted.
+      if (shared) await this.persistPrivateOrg(shared);
+      await this.globalState?.update(ORG_SYNC_MIGRATED_KEY, true).then(undefined, () => {});
     }
     if (this.syncEnabled() && shared && !sameOrg(shared, this.privateOrg)) {
       this.persistPrivateOrg(shared);

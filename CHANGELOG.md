@@ -2,6 +2,10 @@
 
 All notable changes to the "sf-test-runner" extension are documented here.
 
+## [0.15.0] - 2026-09-24
+
+- **Your target org is now per window.** Each VS Code window remembers its own target org, so two projects open side by side run their tests against two different orgs, and picking an org in one window no longer retargets the other. On the first start after updating every window begins on the org this extension last used on this machine, so nothing changes until you pick — check the status bar in each window and pick once where it differs; from then on each window keeps its choice. With `sfTestRunner.syncOrgWithFamily` on, the shared org is still machine-wide, so all windows follow it together.
+
 ## [0.14.0] - 2026-09-24
 
 - **See what a test's `System.debug` printed.** A new **with logs** checkbox in the Tests view (setting `sfTestRunner.runWithLogs`, off by default) keeps each test method's debug log. After the run, a small **log** button next to every method that has one opens it in an editor tab: the `System.debug` lines first, each with its source line and level, then the full log underneath — easy to read, one Ctrl+A to copy, Save As if you want a file. Nothing is written to disk on its own, and clicking again brings back the same tab.

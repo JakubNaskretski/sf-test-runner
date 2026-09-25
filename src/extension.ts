@@ -40,10 +40,11 @@ export function activate(context: vscode.ExtensionContext): void {
   context.subscriptions.push(output);
 
   const sfCli = new SfCliService(output);
-  // Selection is per workspace (it names classes in THIS repo); the org list and
+  // Selection is per workspace (it names classes in THIS repo) and so is the target
+  // org, so two windows on two projects don't retarget each other; the org list and
   // the org-tests cache are per machine.
   const state = new PanelState(context.workspaceState);
-  const orgPicker = new OrgPicker(sfCli, context.globalState);
+  const orgPicker = new OrgPicker(sfCli, context.globalState, context.workspaceState);
   const fetcher = new OrgTestFetcher(sfCli, context.globalState, output);
   const scanner = new LocalTestScanner(output);
   const resolver = new ApexFileResolver();
