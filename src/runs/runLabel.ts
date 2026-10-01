@@ -36,6 +36,13 @@ export function runLabel(scope: RunScope, count: number, alias: string): string 
   }
 }
 
+/** `runLabel`, with a suffix that makes the pairing visible in the Results
+ *  view: a run started via the cross-extension handoff (`TestRunner.runFor`)
+ *  was asked for by sf-org-deploy-wrapper, not ticked in the Tests view. */
+export function handoffLabel(scope: RunScope, count: number, alias: string): string {
+  return `${runLabel(scope, count, alias)} (from SF Deploy)`;
+}
+
 /**
  * Classes in `selectors` that the index knows only from disk. Running one is a
  * guaranteed failure — `--tests` names a class in the ORG — so the runner warns
@@ -69,6 +76,37 @@ export function dropClasses(selectors: readonly string[], classNames: readonly s
 }
 
 /**
+ * `notDeployed`, minus whatever the caller itself just claimed is on the org
+ * (the cross-extension handoff's `deployed` flag: "the classNames I passed
+ * are on targetOrg right now"). Compared case-insensitively, against the
+ * NAMES the caller gave — a name the caller never mentioned is still not
+ * deployed as far as this is concerned, so it stays in the warning.
+ */
+export function excludeDeployed(
+  notDeployed: readonly string[],
+  deployedNames: readonly string[] | undefined,
+): string[] {
+  if (!deployedNames || deployedNames.length === 0) return [...notDeployed];
+  const deployed = new Set(deployedNames.map((n) => n.toLowerCase()));
+  return notDeployed.filter((name) => !deployed.has(name.toLowerCase()));
+}
+
+/**
+ * Whether the org "Deploy first" just deployed to (`deployedTo`, captured
+ * before the not-deployed modal opened) is no longer the org the picker
+ * currently shows (`current`). A deploy can sit waiting for a while, and the
+ * picker is free to move during that wait — this is what tells `runSelected`
+ * whether to ask before pinning the run to an org the picker no longer shows.
+ * `current` undefined (the org was cleared) counts as moved too.
+ */
+export function orgMovedDuringDeploy(
+  deployedTo: { username: string },
+  current: { username: string } | undefined,
+): boolean {
+  return !sameOrg(deployedTo.username, current?.username);
+}
+
+/**
  * Why a finished run's coverage must NOT be published, or undefined when it may.
  *
  * A run is polled for as long as the org takes, and the user can switch the
@@ -87,6 +125,25 @@ export function coverageOrgChangedNote(
   return (
     `Coverage from ${runOrg.alias} not painted: the target org changed${to} during the run. ` +
     `Load Recent Test Runs on ${runOrg.alias} to see it.`
+  );
+}
+
+/**
+ * The handoff's version of `coverageOrgChangedNote`: a run started through
+ * the cross-extension handoff (`TestRunner.runFor`) targets the CALLER's
+ * org, which is routinely not the picker's — nothing "changed during the
+ * run" when it never matched the picker to begin with, so that wording
+ * would be false here. Same gate, honest wording.
+ */
+export function handoffCoverageNote(
+  runOrg: { username: string; alias: string },
+  currentOrg: { username: string; alias: string } | undefined,
+): string | undefined {
+  if (sameOrg(runOrg.username, currentOrg?.username)) return undefined;
+  const picker = currentOrg ? currentOrg.alias : 'no org';
+  return (
+    `Coverage from ${runOrg.alias} not painted: the run was on ${runOrg.alias}, not the ` +
+    `picker's org (${picker}). Load Recent Test Runs on ${runOrg.alias} to see it.`
   );
 }
 

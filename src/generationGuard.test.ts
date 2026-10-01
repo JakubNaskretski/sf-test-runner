@@ -37,3 +37,13 @@ test('an out-of-order resolution (B lands after C) is rejected', () => {
   // …then B's slower resolution finally arrives — it must NOT apply.
   assert.equal(g.isCurrent(b), false);
 });
+
+test('current peeks the latest generation without claiming one', () => {
+  const g = new GenerationGuard();
+  assert.equal(g.current(), 0);
+  const a = g.next();
+  assert.equal(g.current(), a);
+  assert.equal(g.current(), a, 'peeking twice claims nothing the second time either');
+  const b = g.next();
+  assert.equal(g.current(), b);
+});

@@ -173,3 +173,40 @@ test('two concurrent fetches for one org share a single query pass', async () =>
   await fetcher.fetch('acme-dev@example.com', []);
   assert.equal(calls.listCalls, 2);
 });
+
+test('markDeployed flips an existing non-test row to isTest, and adds a minimal row for a name the org fetch never saw', async () => {
+  const { cli } = fakeCli(ROWS, BODIES);
+  const fetcher = new OrgTestFetcher(cli, fakeMemento());
+  await fetcher.fetch('acme-dev@example.com', ['acmeordertest']);
+
+  await fetcher.markDeployed('acme-dev@example.com', ['AcmeOrderService', 'AcmeBrandNewTest']);
+
+  const cached = fetcher.cached('acme-dev@example.com')!;
+  assert.equal(cached.classes.find((c) => c.name === 'AcmeOrderService')!.isTest, true);
+  const added = cached.classes.find((c) => c.name === 'AcmeBrandNewTest')!;
+  assert.equal(added.isTest, true);
+  assert.deepEqual(added.methods, []);
+  // Everything else is untouched.
+  assert.equal(cached.classes.find((c) => c.name === 'AcmeOrderTest')!.isTest, true);
+});
+
+test('markDeployed is case-insensitive and a no-op when nothing actually changes', async () => {
+  const { cli } = fakeCli(ROWS, BODIES);
+  const fetcher = new OrgTestFetcher(cli, fakeMemento());
+  await fetcher.fetch('acme-dev@example.com', ['acmeordertest']);
+  const before = fetcher.cached('acme-dev@example.com');
+
+  // Already isTest: true, just differently cased — nothing to flip.
+  await fetcher.markDeployed('acme-dev@example.com', ['ACMEORDERTEST']);
+
+  assert.equal(fetcher.cached('acme-dev@example.com'), before, 'the stored object was never rewritten');
+});
+
+test('markDeployed is a no-op for an org that was never fetched', async () => {
+  const { cli } = fakeCli(ROWS, BODIES);
+  const fetcher = new OrgTestFetcher(cli, fakeMemento());
+
+  await fetcher.markDeployed('never-fetched@example.com', ['AnyClass']);
+
+  assert.equal(fetcher.cached('never-fetched@example.com'), undefined);
+});

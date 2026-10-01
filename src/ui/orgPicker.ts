@@ -301,6 +301,32 @@ export class OrgPicker implements vscode.Disposable {
     }
   }
 
+  /**
+   * For a caller that just needs an up-to-date list right now before
+   * deciding something of its own (the cross-extension handoff's
+   * unknown-org retry) and must not pop any UI of its own: no progress
+   * notification, no toast, success or failure — the caller has its own way
+   * to report that. Never writes the picker's own selection (`privateOrg`),
+   * same as the loud `refreshOrgs`. On failure the rejection just propagates
+   * — there is nothing to show here, so there is nothing to catch.
+   *
+   * Crucially, this NEVER claims a generation itself — a loud refresh, a
+   * picker revalidate or another quiet refresh are free to run at the same
+   * time, and none of them must ever be told they were superseded by this
+   * one (that bug left a picker stuck `busy` and dropped a perfectly good
+   * loud result). It only ADOPTS its own result into the shared cache when
+   * nothing newer claimed a generation while it was in flight, but hands
+   * the caller the list it fetched regardless — checking one org right now
+   * needs the freshest answer even when the shared cache ends up keeping a
+   * different, newer fetch's answer instead.
+   */
+  async refreshOrgsQuietly(): Promise<OrgInfo[]> {
+    const before = this.listGen.current();
+    const orgs = await this.sfCli.listOrgs();
+    if (this.listGen.current() === before) this.setKnownOrgs(orgs);
+    return orgs;
+  }
+
   /** Swap the picker's items, keeping the highlight on the org the user had it
    *  on (or the current org for a fresh picker). */
   private renderItems(qp: vscode.QuickPick<OrgQuickPickItem>, orgs: OrgInfo[]): void {

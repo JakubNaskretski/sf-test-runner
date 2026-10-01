@@ -106,7 +106,9 @@ const realLoad = (Module as any)._load;
       showInformationMessage: async (): Promise<undefined> => undefined,
       showWarningMessage: async (): Promise<undefined> => undefined,
       showErrorMessage: async (): Promise<undefined> => undefined,
+      withProgress: async (_opts: unknown, task: () => Promise<unknown>): Promise<unknown> => task(),
     },
+    ProgressLocation: { Notification: 15 },
     workspace: {
       getConfiguration: () => ({
         get: (key: string, fallback?: unknown) =>
@@ -564,6 +566,88 @@ test('the one-time family adoption lands in the window store, its flag in global
     globalState.get(PRIVATE_KEY),
     undefined,
     'the adopted org must never be written back to globalState',
+  );
+  picker.dispose();
+});
+
+test('refreshOrgsQuietly returns the list it fetched and updates the cache with no selection change', async () => {
+  // A stale cache (QA missing) behind a live list that already has it — the
+  // scenario the handoff's unknown-org retry is for.
+  const state = memento({ [ORG_LIST_CACHE_KEY]: [DEV] });
+  const cli = fakeCli([DEV, QA]);
+  const { picker, fired } = makePicker(state, cli);
+  assert.deepEqual(picker.knownOrgList().map((o) => o.username), [DEV.username]);
+
+  const result = await picker.refreshOrgsQuietly();
+
+  assert.deepEqual(result.map((o) => o.username).sort(), [DEV.username, QA.username].sort());
+  assert.deepEqual(
+    picker.knownOrgList().map((o) => o.username).sort(),
+    [DEV.username, QA.username].sort(),
+  );
+  assert.deepEqual(fired, [], 'a quiet refresh never applies or switches an org');
+  assert.equal(state.get(PRIVATE_KEY), undefined, "the picker's own selection is untouched");
+  picker.dispose();
+});
+
+test('refreshOrgsQuietly rejects (and leaves the cache as it was) when the fetch fails', async () => {
+  const state = memento({ [ORG_LIST_CACHE_KEY]: [DEV] });
+  const cli: any = {
+    listOrgs: async () => {
+      throw new Error('boom');
+    },
+    setCurrentOrg: () => {},
+    getCurrentOrg: () => undefined,
+  };
+  const { picker } = makePicker(state, cli);
+
+  await assert.rejects(picker.refreshOrgsQuietly(), /boom/);
+
+  assert.deepEqual(picker.knownOrgList().map((o) => o.username), [DEV.username]);
+  picker.dispose();
+});
+
+test('refreshOrgsQuietly never claims a generation, so a concurrent loud refresh is never told it was superseded', async () => {
+  // The quiet fetch starts first (captures the generation that is current at
+  // that moment) and resolves LAST, after a loud refresh — which DOES claim a
+  // newer generation — has already landed. If the quiet path ever called
+  // `listGen.next()` itself, the loud refresh's own token would look stale by
+  // the time IT checks, and its result (and the picker's busy spinner) would
+  // be dropped.
+  const deferred: { resolve: (orgs: OrgInfo[]) => void }[] = [];
+  const cli: any = {
+    listOrgs: () =>
+      new Promise<OrgInfo[]>((resolve) => {
+        deferred.push({ resolve });
+      }),
+    setCurrentOrg: () => {},
+    getCurrentOrg: () => undefined,
+  };
+  const state = memento({ [ORG_LIST_CACHE_KEY]: [] });
+  const { picker } = makePicker(state, cli);
+
+  const quiet = picker.refreshOrgsQuietly(); // call #1: peeks the generation, claims none
+  const loud = picker.refreshOrgs(); // call #2: claims a newer generation synchronously
+  assert.equal(deferred.length, 2);
+
+  deferred[1].resolve([DEV, QA]); // the loud (newer) fetch lands first
+  await loud;
+  assert.deepEqual(
+    picker.knownOrgList().map((o) => o.username).sort(),
+    [DEV.username, QA.username].sort(),
+    "the loud refresh's own result must land — it was never superseded",
+  );
+
+  deferred[0].resolve([QA]); // the stale quiet fetch lands after
+  const quietResult = await quiet;
+
+  // The quiet fetch still hands the caller what IT fetched...
+  assert.deepEqual(quietResult.map((o) => o.username), [QA.username]);
+  // ...but a fetch that started before a newer one must not clobber the
+  // cache once that newer fetch has already applied its own result.
+  assert.deepEqual(
+    picker.knownOrgList().map((o) => o.username).sort(),
+    [DEV.username, QA.username].sort(),
   );
   picker.dispose();
 });

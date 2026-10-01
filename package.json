@@ -148,6 +148,11 @@
         "title": "Run Test Method"
       },
       {
+        "command": "sfTestRunner.runTestsFor",
+        "category": "SF Tests",
+        "title": "Run Tests For (cross-extension handoff)"
+      },
+      {
         "command": "sfTestRunner.clearCommandHistory",
         "category": "SF Tests",
         "title": "Clear Command History",
@@ -184,6 +189,10 @@
         },
         {
           "command": "sfTestRunner.runMethod",
+          "when": "false"
+        },
+        {
+          "command": "sfTestRunner.runTestsFor",
           "when": "false"
         }
       ],
