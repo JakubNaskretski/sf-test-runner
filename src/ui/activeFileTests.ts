@@ -52,3 +52,63 @@ export function classNameOf(fileName: string): string {
   const base = fileName.split(/[\\/]/).pop() ?? '';
   return base.replace(/\.(cls|trigger)$/i, '').trim();
 }
+
+/**
+ * Which test CLASSES to run for a cross-extension handoff (`sfTestRunner.
+ * runTestsFor`): one name in, the test classes to run out. Per name,
+ * case-insensitive: the index already knows it as a test class → itself;
+ * else every class that DECLARES it via `@IsTest(testFor=…)` (bare class
+ * names, see `findTestForTargets`); else the first naming-convention hit.
+ * A name matching nothing contributes no test class. Order preserved,
+ * duplicates dropped.
+ *
+ * Deliberately not `testKeysForActiveFile`: that one returns selection KEYS
+ * (method-level) for a single file and collects every matching convention;
+ * this returns CLASS names (what `--tests` wants) for a whole batch and stops
+ * at the first naming-convention match.
+ */
+export function resolveTestClasses(
+  index: TestIndexSnapshot,
+  classNames: readonly string[],
+): string[] {
+  const byName = new Map<string, TestClassEntry>();
+  for (const entry of index.classes) byName.set(entry.name.toLowerCase(), entry);
+
+  const out: string[] = [];
+  const seen = new Set<string>();
+  const add = (name: string): void => {
+    const key = name.toLowerCase();
+    if (seen.has(key)) return;
+    seen.add(key);
+    out.push(name);
+  };
+
+  for (const raw of classNames) {
+    const name = raw.trim();
+    if (!name) continue;
+    const lower = name.toLowerCase();
+
+    const own = byName.get(lower);
+    if (own) {
+      add(own.name);
+      continue;
+    }
+
+    const declaredBy = [...byName.values()].filter((entry) =>
+      (entry.testFor ?? []).some((target) => target.toLowerCase() === lower),
+    );
+    if (declaredBy.length > 0) {
+      for (const entry of declaredBy) add(entry.name);
+      continue;
+    }
+
+    for (const candidate of candidateNames(name)) {
+      const entry = byName.get(candidate.toLowerCase());
+      if (entry) {
+        add(entry.name);
+        break;
+      }
+    }
+  }
+  return out;
+}

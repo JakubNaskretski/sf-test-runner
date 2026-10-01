@@ -568,6 +568,36 @@ test('the one-time family adoption lands in the window store, its flag in global
   picker.dispose();
 });
 
+test('refreshOrgs({ quiet: true }) updates the cached list with no selection change', async () => {
+  // A stale cache (QA missing) behind a live list that already has it — the
+  // scenario the handoff's unknown-org retry is for.
+  const state = memento({ [ORG_LIST_CACHE_KEY]: [DEV] });
+  const cli = fakeCli([DEV, QA]);
+  const { picker, fired } = makePicker(state, cli);
+  assert.deepEqual(picker.knownOrgList().map((o) => o.username), [DEV.username]);
+
+  await picker.refreshOrgs({ quiet: true });
+
+  assert.deepEqual(
+    picker.knownOrgList().map((o) => o.username).sort(),
+    [DEV.username, QA.username].sort(),
+  );
+  assert.deepEqual(fired, [], 'a quiet refresh never applies or switches an org');
+  assert.equal(state.get(PRIVATE_KEY), undefined, "the picker's own selection is untouched");
+  picker.dispose();
+});
+
+test('refreshOrgs({ quiet: true }) leaves the cache as it was when the fetch fails', async () => {
+  const state = memento({ [ORG_LIST_CACHE_KEY]: [DEV] });
+  const cli: any = { listOrgs: async () => { throw new Error('boom'); }, setCurrentOrg: () => {}, getCurrentOrg: () => undefined };
+  const { picker } = makePicker(state, cli);
+
+  await picker.refreshOrgs({ quiet: true });
+
+  assert.deepEqual(picker.knownOrgList().map((o) => o.username), [DEV.username]);
+  picker.dispose();
+});
+
 test('extension wiring: the org list cache is machine-wide, the target org per window', async () => {
   // Source pin: the two optional mementos are adjacent — swapping them compiles
   // and passes every unit test while silently making the org machine-wide again.

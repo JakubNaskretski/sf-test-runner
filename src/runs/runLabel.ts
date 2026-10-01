@@ -36,6 +36,13 @@ export function runLabel(scope: RunScope, count: number, alias: string): string 
   }
 }
 
+/** `runLabel`, with a suffix that makes the pairing visible in the Results
+ *  view: a run started via the cross-extension handoff (`TestRunner.runFor`)
+ *  was asked for by sf-org-deploy-wrapper, not ticked in the Tests view. */
+export function handoffLabel(scope: RunScope, count: number, alias: string): string {
+  return `${runLabel(scope, count, alias)} (from SF Deploy)`;
+}
+
 /**
  * Classes in `selectors` that the index knows only from disk. Running one is a
  * guaranteed failure — `--tests` names a class in the ORG — so the runner warns
@@ -66,6 +73,37 @@ export function localOnlyClasses(
 export function dropClasses(selectors: readonly string[], classNames: readonly string[]): string[] {
   const drop = new Set(classNames.map((n) => n.toLowerCase()));
   return selectors.filter((s) => !drop.has(classOfSelector(s).toLowerCase()));
+}
+
+/**
+ * `notDeployed`, minus whatever the caller itself just claimed is on the org
+ * (the cross-extension handoff's `deployed` flag: "the classNames I passed
+ * are on targetOrg right now"). Compared case-insensitively, against the
+ * NAMES the caller gave — a name the caller never mentioned is still not
+ * deployed as far as this is concerned, so it stays in the warning.
+ */
+export function excludeDeployed(
+  notDeployed: readonly string[],
+  deployedNames: readonly string[] | undefined,
+): string[] {
+  if (!deployedNames || deployedNames.length === 0) return [...notDeployed];
+  const deployed = new Set(deployedNames.map((n) => n.toLowerCase()));
+  return notDeployed.filter((name) => !deployed.has(name.toLowerCase()));
+}
+
+/**
+ * Whether the org "Deploy first" just deployed to (`deployedTo`, captured
+ * before the not-deployed modal opened) is no longer the org the picker
+ * currently shows (`current`). A deploy can sit waiting for a while, and the
+ * picker is free to move during that wait — this is what tells `runSelected`
+ * whether to ask before pinning the run to an org the picker no longer shows.
+ * `current` undefined (the org was cleared) counts as moved too.
+ */
+export function orgMovedDuringDeploy(
+  deployedTo: { username: string },
+  current: { username: string } | undefined,
+): boolean {
+  return !sameOrg(deployedTo.username, current?.username);
 }
 
 /**

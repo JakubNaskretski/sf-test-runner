@@ -4,8 +4,11 @@ import type { RunRecord, TestIndexSnapshot, TestRunSummary } from '../types';
 import {
   coverageOrgChangedNote,
   dropClasses,
+  excludeDeployed,
+  handoffLabel,
   isSelector,
   localOnlyClasses,
+  orgMovedDuringDeploy,
   runLabel,
   summaryText,
 } from './runLabel';
@@ -82,6 +85,11 @@ test('runLabel names each scope', () => {
   assert.equal(runLabel('selected', 1, 'acme-dev'), '1 test on acme-dev');
   assert.equal(runLabel('allLocal', 0, 'acme-dev'), 'All local tests on acme-dev');
   assert.equal(runLabel('allInOrg', 0, 'acme-dev'), 'All tests incl. managed on acme-dev');
+});
+
+test('handoffLabel appends the "from SF Deploy" pairing marker to the plain runLabel', () => {
+  assert.equal(handoffLabel('selected', 7, 'acme-dev'), '7 tests on acme-dev (from SF Deploy)');
+  assert.equal(handoffLabel('selected', 1, 'acme-dev'), '1 test on acme-dev (from SF Deploy)');
 });
 
 test('summaryText header carries verdict, counts, org, id and an ISO timestamp', () => {
@@ -231,4 +239,61 @@ test('coverageOrgChangedNote: a switch mid-run names both orgs and where to find
 test('coverageOrgChangedNote: an org cleared mid-run also blocks the coverage', () => {
   const note = coverageOrgChangedNote({ username: 'dev@example.com', alias: 'DevOrg' }, undefined);
   assert.match(note ?? '', /^Coverage from DevOrg not painted: the target org changed during/);
+});
+
+test('excludeDeployed drops names the caller claims are already on the org', () => {
+  assert.deepEqual(
+    excludeDeployed(['AccountServiceTest', 'InvoiceCalculatorTest'], ['AccountServiceTest']),
+    ['InvoiceCalculatorTest'],
+  );
+});
+
+test('excludeDeployed compares case-insensitively', () => {
+  assert.deepEqual(
+    excludeDeployed(['AccountServiceTest'], ['accountservicetest']),
+    [],
+  );
+});
+
+test('excludeDeployed leaves names the caller never mentioned alone', () => {
+  // The caller's claim only covers the classNames it actually passed — a
+  // class the handoff did not deploy is still checked as usual.
+  assert.deepEqual(
+    excludeDeployed(['AccountServiceTest', 'InvoiceCalculatorTest'], ['SomethingElse']),
+    ['AccountServiceTest', 'InvoiceCalculatorTest'],
+  );
+});
+
+test('excludeDeployed is a no-op with no deployed names at all', () => {
+  assert.deepEqual(excludeDeployed(['AccountServiceTest'], undefined), ['AccountServiceTest']);
+  assert.deepEqual(excludeDeployed(['AccountServiceTest'], []), ['AccountServiceTest']);
+});
+
+test('excludeDeployed on an already-empty list stays empty', () => {
+  assert.deepEqual(excludeDeployed([], ['AccountServiceTest']), []);
+});
+
+test('orgMovedDuringDeploy: the same org has not moved', () => {
+  assert.equal(
+    orgMovedDuringDeploy({ username: 'dev@example.com' }, { username: 'dev@example.com' }),
+    false,
+  );
+});
+
+test('orgMovedDuringDeploy: a different org has moved', () => {
+  assert.equal(
+    orgMovedDuringDeploy({ username: 'dev@example.com' }, { username: 'qa@example.com' }),
+    true,
+  );
+});
+
+test('orgMovedDuringDeploy: usernames compare case-insensitively, like every other org match', () => {
+  assert.equal(
+    orgMovedDuringDeploy({ username: 'dev@example.com' }, { username: 'DEV@EXAMPLE.com' }),
+    false,
+  );
+});
+
+test('orgMovedDuringDeploy: no current org (cleared) counts as moved', () => {
+  assert.equal(orgMovedDuringDeploy({ username: 'dev@example.com' }, undefined), true);
 });

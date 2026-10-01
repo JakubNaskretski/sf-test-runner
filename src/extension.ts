@@ -16,10 +16,12 @@ import * as vscode from 'vscode';
 import { LocalTestScanner } from './discovery/localTests';
 import { OrgTestFetcher } from './discovery/orgTests';
 import { buildIndex } from './discovery/testIndex';
+import { parseHandoffShape, RunTestsForResult, toRunTestsForResult } from './handoff';
+import { sameOrg } from './orgMatch';
 import { TestRunner } from './runs/testRunner';
 import { SfCliService } from './salesforce/sfCliService';
 import { CommandLogEntry, TestClassEntry } from './types';
-import { classNameOf, testKeysForActiveFile } from './ui/activeFileTests';
+import { classNameOf, resolveTestClasses, testKeysForActiveFile } from './ui/activeFileTests';
 import { ApexTestCodeLensProvider, RunLensArgs } from './ui/codeLens';
 import { CommandHistoryProvider, copyCommandToClipboard } from './ui/commandHistoryProvider';
 import { CoverageDecorator, classNameFromUri } from './ui/coverageDecorator';
@@ -321,6 +323,59 @@ export function activate(context: vscode.ExtensionContext): void {
     });
   }
 
+  /**
+   * `sfTestRunner.runTestsFor` — the cross-extension test handoff. A sibling
+   * extension (sf-org-deploy-helper, right after a deploy) calls this with
+   * the classes it just handled and the org it targeted; this plugin
+   * resolves their test classes and runs them. Contributed, so callable by
+   * anyone — every argument is validated by `parseHandoffArgs` before any of
+   * it reaches a CLI selector or an org lookup.
+   */
+  async function runTestsFor(raw: unknown): Promise<RunTestsForResult> {
+    const shape = parseHandoffShape(raw);
+    if (!shape.ok) {
+      return { status: 'error', testClasses: [], passed: 0, failed: 0, message: shape.message };
+    }
+    const { classNames, targetOrg, deployed } = shape.value;
+
+    let org = orgPicker.knownOrgList().find((o) => sameOrg(o.username, targetOrg));
+    if (!org) {
+      // The cached org list might just be stale — refresh it once, quietly
+      // (no progress notification, no toast — this runs on every handoff
+      // whose org isn't cached yet, not just a user-driven refresh; it does
+      // not touch the picker's own selection either way) before concluding
+      // it really is unknown.
+      await orgPicker.refreshOrgs({ quiet: true });
+      org = orgPicker.knownOrgList().find((o) => sameOrg(o.username, targetOrg));
+    }
+    if (!org) {
+      return {
+        status: 'error',
+        testClasses: [],
+        passed: 0,
+        failed: 0,
+        message: `${targetOrg} is not a known org.`,
+      };
+    }
+
+    await ensureScanned();
+    const testClasses = resolveTestClasses(state.index, classNames);
+    if (testClasses.length === 0) {
+      // No toast here: this is the handoff path, and the caller shows its own
+      // card for `noTests` — TR's own entry points (Select Tests for Active
+      // Class) keep theirs.
+      return { status: 'noTests', testClasses: [], passed: 0, failed: 0 };
+    }
+
+    if (runner.isRunning) {
+      return toRunTestsForResult({ record: undefined, ranSelectors: [], busy: true }, testClasses);
+    }
+
+    resultsView.reveal();
+    const outcome = await runner.runFor(testClasses, org, deployed ? { deployed: classNames } : undefined);
+    return toRunTestsForResult(outcome, testClasses);
+  }
+
   context.subscriptions.push(
     vscode.commands.registerCommand('sfTestRunner.runSelected', () => runner.runSelected()),
     vscode.commands.registerCommand('sfTestRunner.runAllLocal', () => runner.runAllLocal()),
@@ -355,6 +410,9 @@ export function activate(context: vscode.ExtensionContext): void {
     ),
     vscode.commands.registerCommand('sfTestRunner.runMethod', (args?: unknown) =>
       runFromLens(args, true),
+    ),
+    vscode.commands.registerCommand('sfTestRunner.runTestsFor', (args?: unknown) =>
+      runTestsFor(args),
     ),
     vscode.commands.registerCommand('sfTestRunner.clearCommandHistory', () => commands.clear()),
     vscode.commands.registerCommand('sfTestRunner.copyCommand', (node?: unknown) => {
