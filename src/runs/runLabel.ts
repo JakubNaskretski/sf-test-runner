@@ -128,6 +128,25 @@ export function coverageOrgChangedNote(
   );
 }
 
+/**
+ * The handoff's version of `coverageOrgChangedNote`: a run started through
+ * the cross-extension handoff (`TestRunner.runFor`) targets the CALLER's
+ * org, which is routinely not the picker's — nothing "changed during the
+ * run" when it never matched the picker to begin with, so that wording
+ * would be false here. Same gate, honest wording.
+ */
+export function handoffCoverageNote(
+  runOrg: { username: string; alias: string },
+  currentOrg: { username: string; alias: string } | undefined,
+): string | undefined {
+  if (sameOrg(runOrg.username, currentOrg?.username)) return undefined;
+  const picker = currentOrg ? currentOrg.alias : 'no org';
+  return (
+    `Coverage from ${runOrg.alias} not painted: the run was on ${runOrg.alias}, not the ` +
+    `picker's org (${picker}). Load Recent Test Runs on ${runOrg.alias} to see it.`
+  );
+}
+
 /** Failures, in the order the run reported them. `Skip` is not a failure. */
 export function failedResults(summary: TestRunSummary | undefined): TestMethodResult[] {
   if (!summary) return [];

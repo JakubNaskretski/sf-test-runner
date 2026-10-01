@@ -5,6 +5,7 @@ import {
   coverageOrgChangedNote,
   dropClasses,
   excludeDeployed,
+  handoffCoverageNote,
   handoffLabel,
   isSelector,
   localOnlyClasses,
@@ -296,4 +297,30 @@ test('orgMovedDuringDeploy: usernames compare case-insensitively, like every oth
 
 test('orgMovedDuringDeploy: no current org (cleared) counts as moved', () => {
   assert.equal(orgMovedDuringDeploy({ username: 'dev@example.com' }, undefined), true);
+});
+
+test('handoffCoverageNote: the run matches the picker — nothing to say', () => {
+  const org = { username: 'dev@example.com', alias: 'DevOrg' };
+  assert.equal(handoffCoverageNote(org, { ...org }), undefined);
+  assert.equal(
+    handoffCoverageNote(org, { username: 'DEV@example.com', alias: 'DevOrg' }),
+    undefined,
+  );
+});
+
+test('handoffCoverageNote: says the run was on its own org, not that the target "changed"', () => {
+  const note = handoffCoverageNote(
+    { username: 'dev@example.com', alias: 'DevOrg' },
+    { username: 'qa@example.com', alias: 'QaOrg' },
+  );
+  assert.ok(note);
+  assert.match(note, /was on DevOrg/);
+  assert.match(note, /picker's org \(QaOrg\)/);
+  assert.doesNotMatch(note, /changed/);
+});
+
+test('handoffCoverageNote: no picker org at all still names it honestly', () => {
+  const note = handoffCoverageNote({ username: 'dev@example.com', alias: 'DevOrg' }, undefined);
+  assert.ok(note);
+  assert.match(note, /picker's org \(no org\)/);
 });

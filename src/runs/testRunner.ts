@@ -21,7 +21,14 @@
  * local process.
  */
 import * as vscode from 'vscode';
-import { deployAborted, deploySucceeded, parseDeployResult, RunForOutcome } from '../handoff';
+import {
+  contributesCommand,
+  decideAfterDeploy,
+  deploySucceeded,
+  handoffCapMessage,
+  parseDeployResult,
+  RunForOutcome,
+} from '../handoff';
 import { isLikelyProduction } from '../kit/orgs';
 import { TRACE_FLAG_MARGIN_MS, debugLogDocument } from '../salesforce/debugLogs';
 import { RunGuard } from '../runGuard';
@@ -49,10 +56,10 @@ import {
   coverageOrgChangedNote,
   dropClasses,
   excludeDeployed,
+  handoffCoverageNote,
   handoffLabel,
   isSelector,
   localOnlyClasses,
-  orgMovedDuringDeploy,
   runLabel,
   summaryText,
 } from './runLabel';
@@ -67,6 +74,12 @@ export interface TestRunnerDeps {
   resolver: ApexFileResolver;
   /** Reveal the output channel, unless the user turned that off. */
   revealOutput(): void;
+  /** Record that `classNames` are now present (and are tests) in the org
+   *  half of the index for `orgUsername` — "Deploy first" just put them
+   *  there — then rebuild the index so the same classes don't warn as
+   *  not-deployed again this session. Only ever called for the org that was
+   *  actually deployed to. */
+  markDeployed(orgUsername: string, classNames: readonly string[]): Promise<void>;
 }
 
 /**
@@ -189,21 +202,32 @@ export class TestRunner implements vscode.Disposable {
    * The cross-extension test handoff (`sfTestRunner.runTestsFor`): run
    * `selectors` against `org`, which is the CALLER's target org and may not
    * be the picker's. Same not-deployed warning as `runSelected` (including
-   * its own "Deploy first" offer); `opts.deployed` is the caller's own claim
-   * that `selectors` (or the names they were resolved from) are already on
-   * `org` — see `excludeDeployed`.
+   * its own "Deploy first" offer, minus the org-moved question — the caller
+   * named its org explicitly, so there is no picker to have moved);
+   * `opts.deployed` is the caller's own claim that `selectors` (or the names
+   * they were resolved from) are already on `org` — see `excludeDeployed`.
    *
-   * `record` is undefined when the run never started: `busy` distinguishes a
-   * guard race (a second handoff raced past the caller's own `isRunning`
-   * check) from a declined production confirmation or a dismissed/emptied
-   * not-deployed modal, both of which the caller has already been told about
-   * via a toast and should read as cancelled.
+   * More than `MAX_CLASS_SELECTORS` resolved classes refuses outright, no
+   * modal: a handoff names classes by convention/declaration, not by hand,
+   * so there is no "Run All Local" escape hatch to offer, and the command
+   * line would risk the same Windows truncation `runSelected` warns about.
+   *
+   * `record` is undefined when the run never started: `error` is set only
+   * for that refusal; otherwise `busy` distinguishes a guard race (a second
+   * handoff raced past the caller's own `isRunning` check) from a declined
+   * production confirmation or a dismissed/emptied not-deployed modal, both
+   * of which the caller has already been told about via a toast and should
+   * read as cancelled.
    */
   async runFor(
     selectors: string[],
     org: OrgInfo,
     opts?: { deployed?: readonly string[] },
   ): Promise<RunForOutcome> {
+    const capMessage = handoffCapMessage(selectors.length, MAX_CLASS_SELECTORS);
+    if (capMessage) {
+      return { record: undefined, ranSelectors: selectors, busy: false, error: capMessage };
+    }
     const confirmed = await this.confirmDeployed(selectors, org, {
       deployedNames: opts?.deployed,
       fromHandoff: true,
@@ -215,7 +239,7 @@ export class TestRunner implements vscode.Disposable {
       coverage,
       (orgUsername, token) =>
         this.deps.sfCli.runTestSelection(confirmed, orgUsername, { cancellation: token, coverage }),
-      { org },
+      { org, fromHandoff: true },
     );
     return { record, ranSelectors: confirmed, busy };
   }
@@ -529,20 +553,16 @@ export class TestRunner implements vscode.Disposable {
    * — nothing was selected in TR, the caller named the classes. `runSelected`
    * passes neither.
    *
-   * "Deploy first" only offers itself when sf-org-deploy-wrapper is installed
-   * and there is an org to deploy to. Its reply crosses the extension
-   * boundary, so it is validated like anything else arriving from outside —
-   * a throw or a malformed result counts as "did not deploy", not as a run.
-   * An `aborted` reply means the user declined DH's OWN confirmation, which
-   * is not this plugin's business to narrate — that one is silent; every
-   * other non-ok reply gets a toast, with DH's `message` when it sent one.
-   * No re-check of the index afterwards: the org half it would check against
-   * is stale by design (nothing refetches it here).
-   *
-   * A deploy can sit waiting for a while, and the picker (`runSelected` only
-   * — never the handoff, which named its org explicitly) is free to move
-   * during that wait: `confirmRunOnDeployedOrg` asks before silently pinning
-   * the run to an org the picker no longer shows.
+   * "Deploy first…" only offers itself when sf-org-deploy-wrapper is
+   * installed (and new enough — see `deployHelperAvailable`) and there is
+   * an org to deploy to. Its reply crosses the extension boundary, so it is
+   * validated like anything else arriving from outside — a throw or a
+   * malformed result counts as "did not deploy", not as a run. What happens
+   * next is `decideAfterDeploy`'s table: `markDeployed` is recorded for
+   * EITHER of its two success outcomes, so the SAME classes don't warn
+   * again next time, whether or not the org turned out to have moved.
+   * No re-check of the index afterwards beyond that: the org half it would
+   * otherwise check against is stale by design (nothing refetches it here).
    */
   private async confirmDeployed(
     selectors: string[],
@@ -557,7 +577,8 @@ export class TestRunner implements vscode.Disposable {
 
     const anyway = 'Run anyway';
     const skip = 'Skip them';
-    const deployFirstLabel = 'Deploy first';
+    // The ellipsis says a second dialog can follow (the org-moved question).
+    const deployFirstLabel = 'Deploy first…';
     const alias = target?.alias ?? 'the target org';
     const offerDeploy = target !== undefined && deployHelperAvailable();
     const buttons = offerDeploy ? [anyway, skip, deployFirstLabel] : [anyway, skip];
@@ -587,29 +608,37 @@ export class TestRunner implements vscode.Disposable {
     }
 
     if (pick === deployFirstLabel && target) {
-      const result = await deployFirst(notDeployed, target.username);
-      if (deploySucceeded(result)) {
-        if (opts?.fromHandoff || !orgMovedDuringDeploy(target, this.deps.getOrg())) {
+      const result = await this.deployFirst(notDeployed, target.username);
+      if (deploySucceeded(result)) await this.deps.markDeployed(target.username, notDeployed);
+      const decision = decideAfterDeploy(
+        result,
+        Boolean(opts?.fromHandoff),
+        target,
+        this.deps.getOrg(),
+      );
+      switch (decision) {
+        case 'run':
           return selectors;
-        }
-        return this.confirmRunOnDeployedOrg(target, selectors);
+        case 'confirmMoved':
+          return this.confirmRunOnDeployedOrg(target, selectors);
+        case 'stopSilent':
+          return null;
+        case 'stopWithMessage':
+          void vscode.window.showInformationMessage(
+            result?.message
+              ? `SF Tests: deploy did not complete — ${result.message}`
+              : 'SF Tests: deploy did not complete.',
+          );
+          return null;
       }
-      if (!deployAborted(result)) {
-        void vscode.window.showInformationMessage(
-          result?.message
-            ? `SF Tests: deploy did not complete — ${result.message}`
-            : 'SF Tests: deploy did not complete.',
-        );
-      }
-      return null;
     }
 
     return pick === anyway ? selectors : null;
   }
 
   /**
-   * "Deploy first" succeeded, but the picker has since moved off the org the
-   * classes were just deployed to. Asking is the honest answer: silently
+   * "Deploy first…" succeeded, but the picker has since moved off the org
+   * the classes were just deployed to. Asking is the honest answer: silently
    * pinning to the deployed-to org would run tests the user no longer thinks
    * they're targeting, and silently following the picker would test classes
    * that were never deployed there. Dismissing (or anything but the one
@@ -632,6 +661,25 @@ export class TestRunner implements vscode.Disposable {
       runOnDeployed,
     );
     return pick === runOnDeployed ? selectors : null;
+  }
+
+  /** "Deploy first…": hand the not-deployed classes to sf-org-deploy-wrapper
+   *  and wait for its outcome. A throw (command missing, the other side
+   *  errored) is logged, not toasted — `decideAfterDeploy` already turns the
+   *  resulting undefined into its own message — and a malformed reply is
+   *  rejected the same way by `parseDeployResult`. */
+  private async deployFirst(classNames: string[], targetOrg: string) {
+    try {
+      const raw = await vscode.commands.executeCommand(DEPLOY_HELPER_COMMAND, {
+        classNames,
+        targetOrg,
+      });
+      return parseDeployResult(raw);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      this.deps.output.appendLine(`✗ "Deploy first" (${DEPLOY_HELPER_COMMAND}) failed: ${message}`);
+      return undefined;
+    }
   }
 
   /**
@@ -664,8 +712,11 @@ export class TestRunner implements vscode.Disposable {
 
   /** Shared entry point of every run: acquire, execute, hand back the
    *  finished record. `opts.org` is the cross-extension handoff's override —
-   *  see `acquire`. `record` is undefined when the run never started;
-   *  `busy` mirrors `acquire`'s guard-specific signal. */
+   *  see `acquire`. `opts.fromHandoff` only changes the wording of the
+   *  "target org changed" coverage note if the org ever turns out not to
+   *  match the picker's — see `publishCoverage`. `record` is undefined when
+   *  the run never started; `busy` mirrors `acquire`'s guard-specific
+   *  signal. */
   private async start(
     labelFor: (alias: string) => string,
     coverage: boolean,
@@ -673,11 +724,11 @@ export class TestRunner implements vscode.Disposable {
       orgUsername: string,
       token: vscode.CancellationToken,
     ) => Promise<StartedTestRun>,
-    opts?: { org?: OrgInfo },
+    opts?: { org?: OrgInfo; fromHandoff?: boolean },
   ): Promise<{ record: RunRecord | undefined; busy: boolean }> {
     const acquired = await this.acquire(opts?.org);
     if (!acquired.org) return { record: undefined, busy: acquired.busy };
-    await this.execute(acquired.org, labelFor, coverage, startRun);
+    await this.execute(acquired.org, labelFor, coverage, startRun, Boolean(opts?.fromHandoff));
     return { record: this.deps.state.run, busy: false };
   }
 
@@ -692,6 +743,7 @@ export class TestRunner implements vscode.Disposable {
       orgUsername: string,
       token: vscode.CancellationToken,
     ) => Promise<StartedTestRun>,
+    fromHandoff: boolean,
   ): Promise<void> {
     const state = this.deps.state;
     const id = `run-${++this.sequence}-${Date.now()}`;
@@ -824,6 +876,7 @@ export class TestRunner implements vscode.Disposable {
           result.summary.asyncApexJobId ?? testRunId,
           result.summary.results.map((r) => r.className),
           'run',
+          fromHandoff,
         );
       }
       this.logSummary(result.summary, org.username, result.coverage);
@@ -897,9 +950,11 @@ export class TestRunner implements vscode.Disposable {
    * A run that returned none leaves the previous snapshot (which carries its own
    * provenance) alone and says so in the log.
    *
-   * `org` is the org the run STARTED on. If the user switched away while it was
-   * polling, the snapshot is not published at all: the run's own results stay
-   * (they are labelled with their org), but nothing paints.
+   * `org` is the org the run STARTED on. If it no longer matches the picker's,
+   * the snapshot is not published at all: the run's own results stay (they are
+   * labelled with their org), but nothing paints. `fromHandoff` only picks the
+   * WORDING for that case — a handoff run's org routinely never matched the
+   * picker to begin with, which is not the same thing as changing mid-run.
    */
   private publishCoverage(
     org: OrgInfo,
@@ -907,13 +962,16 @@ export class TestRunner implements vscode.Disposable {
     runId: string,
     ranTestClasses: Iterable<string>,
     scope: 'run' | 'loaded',
+    fromHandoff = false,
   ): void {
     const infos = [...coverage.values()];
     if (infos.length === 0) {
       this.deps.output.appendLine('No code coverage came back with this run.');
       return;
     }
-    const changed = coverageOrgChangedNote(org, this.deps.getOrg());
+    const changed = fromHandoff
+      ? handoffCoverageNote(org, this.deps.getOrg())
+      : coverageOrgChangedNote(org, this.deps.getOrg());
     if (changed) {
       this.deps.output.appendLine(changed);
       return;
@@ -984,26 +1042,16 @@ export class TestRunner implements vscode.Disposable {
   }
 }
 
-/** Whether sf-org-deploy-wrapper is installed. Checked fresh every time — it
- *  can be installed or removed without a reload. */
+/**
+ * Whether sf-org-deploy-wrapper is installed AND new enough to answer
+ * `deployComponents` — checked fresh every time, since the extension can be
+ * installed, removed or upgraded without a reload. The id alone is not
+ * enough: an older SF Deploy has the id but predates the handoff command,
+ * and calling a command that does not exist would just throw.
+ */
 function deployHelperAvailable(): boolean {
-  return vscode.extensions.getExtension(DEPLOY_HELPER_EXTENSION_ID) !== undefined;
-}
-
-/** "Deploy first": hand the not-deployed classes to sf-org-deploy-wrapper and
- *  wait for its outcome. A throw (command missing, the other side errored) or
- *  a malformed reply both come back as undefined (via `parseDeployResult`) —
- *  the caller treats that the same as "did not deploy". */
-async function deployFirst(classNames: string[], targetOrg: string) {
-  try {
-    const raw = await vscode.commands.executeCommand(DEPLOY_HELPER_COMMAND, {
-      classNames,
-      targetOrg,
-    });
-    return parseDeployResult(raw);
-  } catch {
-    return undefined;
-  }
+  const ext = vscode.extensions.getExtension(DEPLOY_HELPER_EXTENSION_ID);
+  return ext !== undefined && contributesCommand(ext.packageJSON, DEPLOY_HELPER_COMMAND);
 }
 
 /**

@@ -64,6 +64,10 @@ export function activate(context: vscode.ExtensionContext): void {
         output.show(true);
       }
     },
+    markDeployed: async (orgUsername, classNames) => {
+      await fetcher.markDeployed(orgUsername, classNames);
+      rebuildIndex();
+    },
   });
   context.subscriptions.push(runner);
 
@@ -328,8 +332,10 @@ export function activate(context: vscode.ExtensionContext): void {
    * extension (sf-org-deploy-helper, right after a deploy) calls this with
    * the classes it just handled and the org it targeted; this plugin
    * resolves their test classes and runs them. Contributed, so callable by
-   * anyone — every argument is validated by `parseHandoffArgs` before any of
-   * it reaches a CLI selector or an org lookup.
+   * anyone — every argument is validated by `parseHandoffShape` before any
+   * of it reaches a CLI selector or an org lookup; the known-org check runs
+   * separately here (rather than via `parseHandoffArgs`) so a miss can
+   * refresh the list once and retry before it is reported as unknown.
    */
   async function runTestsFor(raw: unknown): Promise<RunTestsForResult> {
     const shape = parseHandoffShape(raw);
@@ -338,15 +344,24 @@ export function activate(context: vscode.ExtensionContext): void {
     }
     const { classNames, targetOrg, deployed } = shape.value;
 
-    let org = orgPicker.knownOrgList().find((o) => sameOrg(o.username, targetOrg));
+    let orgs = orgPicker.knownOrgList();
+    let org = orgs.find((o) => sameOrg(o.username, targetOrg));
     if (!org) {
       // The cached org list might just be stale — refresh it once, quietly
       // (no progress notification, no toast — this runs on every handoff
       // whose org isn't cached yet, not just a user-driven refresh; it does
       // not touch the picker's own selection either way) before concluding
-      // it really is unknown.
-      await orgPicker.refreshOrgs({ quiet: true });
-      org = orgPicker.knownOrgList().find((o) => sameOrg(o.username, targetOrg));
+      // it really is unknown. Matched against the list THIS fetch returned,
+      // not knownOrgList() again — a concurrent newer fetch is allowed to
+      // win the shared cache without costing this lookup its own answer.
+      try {
+        orgs = await orgPicker.refreshOrgsQuietly();
+      } catch (err: any) {
+        const message = `could not list orgs: ${err?.message ?? err}`;
+        output.appendLine(`SF Tests: ${message}`);
+        return { status: 'error', testClasses: [], passed: 0, failed: 0, message };
+      }
+      org = orgs.find((o) => sameOrg(o.username, targetOrg));
     }
     if (!org) {
       return {

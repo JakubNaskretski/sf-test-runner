@@ -74,6 +74,44 @@ export class OrgTestFetcher {
   }
 
   /**
+   * Patch the ORG half of the cache for `orgUsername`: `classNames` are now
+   * present there and classified as tests — "Deploy first" just put them
+   * there, so the next not-deployed check for THIS org must not warn about
+   * them again. A class already in the cache keeps its own record
+   * (methods/testFor/orgId untouched beyond `isTest`); a class the org fetch
+   * never saw gets a minimal row — `buildIndex` prefers the local copy for
+   * everything but `isTest` anyway, once a local file exists.
+   *
+   * A no-op when this org has never been fetched: there is nothing to patch,
+   * and the not-deployed warning could not have fired for it either (see
+   * `localOnlyClasses` — it claims nothing until the org half is known).
+   */
+  async markDeployed(orgUsername: string, classNames: readonly string[]): Promise<void> {
+    const existing = this.cached(orgUsername);
+    if (!existing) return;
+    const byName = new Map(existing.classes.map((c) => [c.name.toLowerCase(), c] as const));
+    let changed = false;
+    for (const name of classNames) {
+      const key = name.toLowerCase();
+      const current = byName.get(key);
+      if (current) {
+        if (!current.isTest) {
+          byName.set(key, { ...current, isTest: true });
+          changed = true;
+        }
+      } else {
+        byName.set(key, { name, orgId: '', isTest: true, methods: [] });
+        changed = true;
+      }
+    }
+    if (!changed) return;
+    await this.memento.update(cacheKey(orgUsername), {
+      ...existing,
+      classes: [...byName.values()],
+    });
+  }
+
+  /**
    * Ask the org for its classes. `localNames` are the names the local scan
    * already classified as tests (case-insensitively matched): those skip the
    * `Body` fetch entirely.

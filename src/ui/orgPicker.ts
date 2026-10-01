@@ -262,18 +262,9 @@ export class OrgPicker implements vscode.Disposable {
     return closed;
   }
 
-  /**
-   * Palette command (`SF Tests: Refresh Org List`): force-refresh the cached
-   * org list so the picker reflects a just-added/removed org. `opts.quiet` is
-   * for a caller that just needs an up-to-date list before deciding something
-   * of its own — the cross-extension handoff's unknown-org retry — and must
-   * not pop any UI: no progress notification, no toast either way. Either
-   * mode only ever touches the cached LIST; neither writes the picker's own
-   * selection (`privateOrg`), loud or quiet.
-   */
-  async refreshOrgs(opts?: { quiet?: boolean }): Promise<void> {
-    if (opts?.quiet) return this.refreshOrgsQuietly();
-
+  /** Palette command (`SF Tests: Refresh Org List`): force-refresh the cached
+   *  org list so the picker reflects a just-added/removed org. */
+  async refreshOrgs(): Promise<void> {
     const gen = this.listGen.next();
     try {
       const orgs = await vscode.window.withProgress(
@@ -310,20 +301,30 @@ export class OrgPicker implements vscode.Disposable {
     }
   }
 
-  /** The quiet half of `refreshOrgs`: same fetch, same generation guard
-   *  (so it can't clobber a newer explicit refresh or vice versa), same
-   *  cache write — no progress notification, no toast either way. A failed
-   *  fetch just leaves the cache as it was; the caller decides what a still-
-   *  stale list means. */
-  private async refreshOrgsQuietly(): Promise<void> {
-    const gen = this.listGen.next();
-    try {
-      const orgs = await this.sfCli.listOrgs();
-      if (!this.listGen.isCurrent(gen)) return; // superseded by a newer fetch
-      this.setKnownOrgs(orgs);
-    } catch {
-      // Silent on purpose — see the doc comment above.
-    }
+  /**
+   * For a caller that just needs an up-to-date list right now before
+   * deciding something of its own (the cross-extension handoff's
+   * unknown-org retry) and must not pop any UI of its own: no progress
+   * notification, no toast, success or failure — the caller has its own way
+   * to report that. Never writes the picker's own selection (`privateOrg`),
+   * same as the loud `refreshOrgs`. On failure the rejection just propagates
+   * — there is nothing to show here, so there is nothing to catch.
+   *
+   * Crucially, this NEVER claims a generation itself — a loud refresh, a
+   * picker revalidate or another quiet refresh are free to run at the same
+   * time, and none of them must ever be told they were superseded by this
+   * one (that bug left a picker stuck `busy` and dropped a perfectly good
+   * loud result). It only ADOPTS its own result into the shared cache when
+   * nothing newer claimed a generation while it was in flight, but hands
+   * the caller the list it fetched regardless — checking one org right now
+   * needs the freshest answer even when the shared cache ends up keeping a
+   * different, newer fetch's answer instead.
+   */
+  async refreshOrgsQuietly(): Promise<OrgInfo[]> {
+    const before = this.listGen.current();
+    const orgs = await this.sfCli.listOrgs();
+    if (this.listGen.current() === before) this.setKnownOrgs(orgs);
+    return orgs;
   }
 
   /** Swap the picker's items, keeping the highlight on the org the user had it

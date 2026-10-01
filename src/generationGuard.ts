@@ -28,4 +28,15 @@ export class GenerationGuard {
   isCurrent(token: number): boolean {
     return token === this.latest;
   }
+
+  /**
+   * Peek the current generation WITHOUT claiming a new one. For a caller
+   * that must never compete for "latest" itself (a background fetch that
+   * piggybacks on whichever other fetch is newest, rather than racing it)
+   * but still needs to tell whether anything newer started while it worked:
+   * snapshot this before the async gap, compare again after.
+   */
+  current(): number {
+    return this.latest;
+  }
 }

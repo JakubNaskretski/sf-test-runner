@@ -11,6 +11,7 @@
  * stays unit testable.
  */
 import { sameOrg } from './orgMatch';
+import { orgMovedDuringDeploy } from './runs/runLabel';
 import type { RunRecord } from './types';
 
 const CLASS_NAME = /^\w+$/;
@@ -122,6 +123,63 @@ export function deployAborted(result: DeployResult | undefined): boolean {
   return result?.status === 'aborted';
 }
 
+/** Whether an installed extension's manifest contributes `command` — the
+ *  version-skew guard for "Deploy first": an older sf-org-deploy-wrapper
+ *  that predates the handoff has the extension id but not
+ *  `deployComponents`, so the button must not appear even though
+ *  `vscode.extensions.getExtension` finds it. Takes the raw `packageJSON`
+ *  rather than the `vscode.Extension` object so it stays unit testable. */
+export function contributesCommand(packageJSON: unknown, command: string): boolean {
+  const manifest = packageJSON as { contributes?: { commands?: unknown } } | null | undefined;
+  const commands = manifest?.contributes?.commands;
+  if (!Array.isArray(commands)) return false;
+  return commands.some((entry) => (entry as { command?: unknown })?.command === command);
+}
+
+/**
+ * `runFor`'s outright refusal when the handoff resolved more test classes
+ * than a single `--tests` run can safely carry: a longer command line can
+ * be truncated on Windows, and — unlike `runSelected` — a handoff has no
+ * "Run All Local" escape hatch to offer instead, so this never asks, it
+ * just stops. Returns the message to report, or undefined when the count
+ * is within `max`.
+ */
+export function handoffCapMessage(resolvedCount: number, max: number): string | undefined {
+  if (resolvedCount <= max) return undefined;
+  return (
+    `${resolvedCount} test classes resolved — at most ${max} can run from a handoff ` +
+    '(a longer command line can be truncated on Windows).'
+  );
+}
+
+export type PostDeployDecision = 'run' | 'confirmMoved' | 'stopSilent' | 'stopWithMessage';
+
+/**
+ * What `confirmDeployed` does once "Deploy first" comes back, as one table:
+ *  - a clean `ok` from the handoff path → `run` (the caller named its org
+ *    explicitly — there is no picker to have moved);
+ *  - a clean `ok` from `runSelected`, org unchanged → `run`;
+ *  - a clean `ok` from `runSelected`, org moved during the wait → ask
+ *    (`confirmMoved` — see `orgMovedDuringDeploy`);
+ *  - `aborted` (the user declined DH's OWN confirmation) → `stopSilent`,
+ *    never this plugin's business to narrate;
+ *  - anything else that isn't `ok` (`failed`/`busy`/`error`, or undefined
+ *    from a throw/malformed reply) → `stopWithMessage`.
+ */
+export function decideAfterDeploy(
+  result: DeployResult | undefined,
+  fromHandoff: boolean,
+  deployedTo: { username: string },
+  current: { username: string } | undefined,
+): PostDeployDecision {
+  if (deploySucceeded(result)) {
+    if (fromHandoff) return 'run';
+    return orgMovedDuringDeploy(deployedTo, current) ? 'confirmMoved' : 'run';
+  }
+  if (deployAborted(result)) return 'stopSilent';
+  return 'stopWithMessage';
+}
+
 /**
  * What `sfTestRunner.runTestsFor` resolves with. `testClasses` is always the
  * resolved test class names, even when the run never started — a caller that
@@ -138,20 +196,24 @@ export interface RunTestsForResult {
 
 /** What `TestRunner.runFor` hands back: the finished record (undefined when
  *  the run never executed), the selectors it actually ran with (after
- *  "Skip them" may have trimmed the list), and whether a never-started run
- *  is specifically because a second run already held the guard. */
+ *  "Skip them" may have trimmed the list), whether a never-started run is
+ *  specifically because a second run already held the guard, and `error` —
+ *  set only when the run was refused outright (too many resolved classes
+ *  for a handoff), which takes priority over `busy`/`cancelled`. */
 export interface RunForOutcome {
   record: RunRecord | undefined;
   ranSelectors: string[];
   busy: boolean;
+  error?: string;
 }
 
 /**
  * Map a `runFor` outcome into the `runTestsFor` result. `record` undefined
- * means the run never executed: `busy` reports a guard race (a second
- * handoff raced past the `isRunning` check) as `busy`, and everything else
- * that never started — a declined production confirmation, a dismissed or
- * emptied not-deployed modal — as `cancelled`. Once something DID run, the
+ * means the run never executed: `error` (set only for the too-many-classes
+ * refusal) wins first, then `busy` reports a guard race (a second handoff
+ * raced past the `isRunning` check), and everything else that never
+ * started — a declined production confirmation, a dismissed or emptied
+ * not-deployed modal — reports `cancelled`. Once something DID run, the
  * reported `testClasses` are the selectors that actually ran, not whatever
  * was resolved before the not-deployed modal could trim them.
  */
@@ -160,6 +222,9 @@ export function toRunTestsForResult(
   testClasses: string[],
 ): RunTestsForResult {
   if (!outcome.record) {
+    if (outcome.error) {
+      return { status: 'error', testClasses, passed: 0, failed: 0, message: outcome.error };
+    }
     return outcome.busy
       ? { status: 'busy', testClasses, passed: 0, failed: 0, message: HANDOFF_BUSY_MESSAGE }
       : { status: 'cancelled', testClasses, passed: 0, failed: 0 };

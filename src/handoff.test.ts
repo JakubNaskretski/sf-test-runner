@@ -2,8 +2,11 @@ import { strict as assert } from 'node:assert';
 import { test } from 'node:test';
 import type { RunRecord } from './types';
 import {
+  contributesCommand,
+  decideAfterDeploy,
   deployAborted,
   deploySucceeded,
+  handoffCapMessage,
   parseDeployResult,
   parseHandoffArgs,
   toRunTestsForResult,
@@ -303,4 +306,110 @@ test('toRunTestsForResult: a record somehow still "running" folds to error rathe
     ['AccountServiceTest'],
   );
   assert.equal(result.status, 'error');
+});
+
+test('toRunTestsForResult: a never-started run with an error message reports error, even if busy is also set', () => {
+  // error (the too-many-classes refusal) is the only outcome that can carry
+  // its own message, so it must win over busy when something sets both.
+  const result = toRunTestsForResult(
+    { record: undefined, ranSelectors: [], busy: true, error: 'too many classes' },
+    ['AccountServiceTest'],
+  );
+  assert.equal(result.status, 'error');
+  assert.equal(result.message, 'too many classes');
+});
+
+// ─────────────────────────────── handoffCapMessage ──────────────────────────
+
+test('handoffCapMessage is undefined at or under the cap', () => {
+  assert.equal(handoffCapMessage(100, 100), undefined);
+  assert.equal(handoffCapMessage(1, 100), undefined);
+});
+
+test('handoffCapMessage reports the count and the cap once over it', () => {
+  const message = handoffCapMessage(101, 100);
+  assert.ok(message);
+  assert.match(message, /101/);
+  assert.match(message, /100/);
+  assert.match(message, /handoff/);
+});
+
+// ─────────────────────────────── contributesCommand ─────────────────────────
+
+test('contributesCommand is true when the manifest lists the command', () => {
+  const packageJSON = {
+    contributes: {
+      commands: [
+        { command: 'sfOrgDeployWrapper.deploy', title: 'Deploy' },
+        { command: 'sfOrgDeployWrapper.deployComponents', title: 'Deploy Components' },
+      ],
+    },
+  };
+  assert.equal(contributesCommand(packageJSON, 'sfOrgDeployWrapper.deployComponents'), true);
+});
+
+test('contributesCommand is false when the manifest lists other commands but not this one', () => {
+  const packageJSON = {
+    contributes: { commands: [{ command: 'sfOrgDeployWrapper.deploy' }] },
+  };
+  assert.equal(contributesCommand(packageJSON, 'sfOrgDeployWrapper.deployComponents'), false);
+});
+
+test('contributesCommand is false with no contributes section at all (an older manifest)', () => {
+  assert.equal(contributesCommand({ name: 'sf-org-deploy-wrapper' }, 'sfOrgDeployWrapper.deployComponents'), false);
+});
+
+test('contributesCommand is false when contributes has no commands array', () => {
+  assert.equal(contributesCommand({ contributes: {} }, 'sfOrgDeployWrapper.deployComponents'), false);
+  assert.equal(
+    contributesCommand({ contributes: { commands: 'not-an-array' } }, 'sfOrgDeployWrapper.deployComponents'),
+    false,
+  );
+});
+
+test('contributesCommand tolerates a malformed packageJSON', () => {
+  assert.equal(contributesCommand(undefined, 'x'), false);
+  assert.equal(contributesCommand(null, 'x'), false);
+  assert.equal(contributesCommand('not an object', 'x'), false);
+  assert.equal(
+    contributesCommand({ contributes: { commands: [null, 42, 'x', {}] } }, 'x'),
+    false,
+  );
+});
+
+// ─────────────────────────────── decideAfterDeploy ──────────────────────────
+
+const DEV = { username: 'dev@example.com' };
+const QA = { username: 'qa@example.com' };
+
+test('decideAfterDeploy: ok + fromHandoff always runs, even if "current" differs from the deployed-to org', () => {
+  assert.equal(decideAfterDeploy({ status: 'ok' }, true, DEV, QA), 'run');
+  assert.equal(decideAfterDeploy({ status: 'ok' }, true, DEV, undefined), 'run');
+  assert.equal(decideAfterDeploy({ status: 'ok' }, true, DEV, DEV), 'run');
+});
+
+test('decideAfterDeploy: ok + not fromHandoff + the picker never moved runs', () => {
+  assert.equal(decideAfterDeploy({ status: 'ok' }, false, DEV, DEV), 'run');
+});
+
+test('decideAfterDeploy: ok + not fromHandoff + the picker moved asks', () => {
+  assert.equal(decideAfterDeploy({ status: 'ok' }, false, DEV, QA), 'confirmMoved');
+});
+
+test('decideAfterDeploy: ok + not fromHandoff + no picker org at all asks (cleared counts as moved)', () => {
+  assert.equal(decideAfterDeploy({ status: 'ok' }, false, DEV, undefined), 'confirmMoved');
+});
+
+test('decideAfterDeploy: aborted always stops silently, regardless of fromHandoff or the org', () => {
+  assert.equal(decideAfterDeploy({ status: 'aborted' }, true, DEV, QA), 'stopSilent');
+  assert.equal(decideAfterDeploy({ status: 'aborted' }, false, DEV, DEV), 'stopSilent');
+});
+
+test('decideAfterDeploy: failed/busy/error and a malformed/thrown (undefined) reply all stop with a message', () => {
+  for (const status of ['failed', 'busy', 'error'] as const) {
+    assert.equal(decideAfterDeploy({ status }, false, DEV, DEV), 'stopWithMessage');
+    assert.equal(decideAfterDeploy({ status }, true, DEV, DEV), 'stopWithMessage');
+  }
+  assert.equal(decideAfterDeploy(undefined, false, DEV, DEV), 'stopWithMessage');
+  assert.equal(decideAfterDeploy(undefined, true, DEV, DEV), 'stopWithMessage');
 });
