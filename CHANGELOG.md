@@ -2,6 +2,11 @@
 
 All notable changes to the "sf-test-runner" extension are documented here.
 
+## [0.16.0] - 2026-10-01
+
+- **Works together with SF Deploy Wrapper.** With both extensions installed, SF Deploy's new **Run tests** buttons (for the Apex you ticked, or for what a deploy just sent) start a run here, on the org you deployed to. It shows in the Results view marked "(from SF Deploy)", and SF Deploy gets a pass/fail summary back. Your org picker and selection are left alone.
+- **Deploy first, then run.** When a test you picked isn't in the org yet, the warning now also offers **Deploy first…** (with SF Deploy Wrapper installed). SF Deploy opens, asks you to confirm the deploy as usual, deploys the missing classes, and the run starts by itself once they land. Cancelling the deploy stops quietly; a failed deploy tells you why. If you switch orgs while it deploys, you're asked before the tests run on the org they were deployed to.
+
 ## [0.15.0] - 2026-09-24
 
 - **Your target org is now per window.** Each VS Code window remembers its own target org, so two projects open side by side run their tests against two different orgs, and picking an org in one window no longer retargets the other. On the first start after updating every window begins on the org this extension last used on this machine, so nothing changes until you pick — check the status bar in each window and pick once where it differs; from then on each window keeps its choice. With `sfTestRunner.syncOrgWithFamily` on, the shared org is still machine-wide, so all windows follow it together.
