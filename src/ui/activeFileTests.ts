@@ -112,3 +112,31 @@ export function resolveTestClasses(
   }
   return out;
 }
+
+/**
+ * Selection keys for a batch of test CLASS names — already resolved (see
+ * `resolveTestClasses`), one entry per name expected. Used right before a
+ * cross-extension handoff run starts, to replace whatever was ticked in the
+ * Tests view with exactly the classes SF Deploy is about to run, so nothing
+ * stale stays visibly selected. Case-insensitive, like every other lookup
+ * here; a name the index does not currently have (a stale index, a race)
+ * contributes nothing rather than guessing. Order preserved, duplicates
+ * dropped.
+ */
+export function keysForClasses(index: TestIndexSnapshot, classNames: readonly string[]): string[] {
+  const byName = new Map<string, TestClassEntry>();
+  for (const entry of index.classes) byName.set(entry.name.toLowerCase(), entry);
+
+  const out: string[] = [];
+  const seen = new Set<string>();
+  for (const raw of classNames) {
+    const entry = byName.get(raw.trim().toLowerCase());
+    if (!entry) continue;
+    for (const key of keysForEntry(entry)) {
+      if (seen.has(key)) continue;
+      seen.add(key);
+      out.push(key);
+    }
+  }
+  return out;
+}

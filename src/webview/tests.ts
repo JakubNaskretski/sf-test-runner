@@ -19,6 +19,7 @@
  * built with `el()` and text nodes — no innerHTML with org data anywhere.
  */
 import type { TestClassEntry, TestMethodEntry, TestSource } from '../types';
+import { selectedSummary, selectionCountsText } from '../ui/selectionCounts';
 import type { OutcomeEntry, TestsViewState, ViewMessage } from './protocol';
 import { appRoot, el, fmtElapsed, fmtMs, glyph, vscodeApi } from './shared';
 
@@ -557,7 +558,8 @@ function renderTabs(s: TestsViewState, u: Ui): void {
     const active = local.tab === t.id;
     node.classList.toggle('active', active);
     node.setAttribute('aria-selected', active ? 'true' : 'false');
-    node.textContent = t.id === 'selected' && n > 0 ? `Selected (${n})` : t.label;
+    node.textContent =
+      t.id === 'selected' && n > 0 ? `Selected (${selectionCountsText(s.selection)})` : t.label;
   }
   if (u.search.value !== local.query) u.search.value = local.query;
   if (u.source.value !== local.source) u.source.value = local.source;
@@ -713,7 +715,7 @@ function methodRow(
 function renderActions(s: TestsViewState, u: Ui): void {
   const n = s.selection.length;
   const running = s.busy.running;
-  u.selCount.textContent = `${n} selected`;
+  u.selCount.textContent = selectedSummary(s.selection);
   show(u.clearSel, n > 0);
   show(u.runSelected, !running);
   show(u.runLocal, !running);

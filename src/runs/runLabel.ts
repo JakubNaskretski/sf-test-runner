@@ -23,24 +23,52 @@ export function classOfSelector(selector: string): string {
   return dot === -1 ? selector : selector.slice(0, dot);
 }
 
-/** Human label for the run bar. `count` is the number of selectors for a
- *  selected run and is ignored for the org-wide scopes. */
-export function runLabel(scope: RunScope, count: number, alias: string): string {
+/**
+ * Human label for the run bar. `count` is the number of selectors for a
+ * selected run and is ignored for the org-wide scopes. `wholeClasses` says
+ * every one of those selectors names a WHOLE class (see `allWholeClasses`):
+ * "N test class(es)" reads truer than "N test(s)" when none of them is a
+ * single method.
+ */
+export function runLabel(
+  scope: RunScope,
+  count: number,
+  alias: string,
+  wholeClasses = false,
+): string {
   switch (scope) {
     case 'allLocal':
       return `All local tests on ${alias}`;
     case 'allInOrg':
       return `All tests incl. managed on ${alias}`;
-    default:
-      return `${count} ${count === 1 ? 'test' : 'tests'} on ${alias}`;
+    default: {
+      const noun = wholeClasses
+        ? count === 1 ? 'test class' : 'test classes'
+        : count === 1 ? 'test' : 'tests';
+      return `${count} ${noun} on ${alias}`;
+    }
   }
+}
+
+/**
+ * Whether every selector names a WHOLE class — the bare `Cls` form `--tests`
+ * accepts, never `Cls.method`. An empty list counts as false: there is
+ * nothing to call a class selection, vacuous truth notwithstanding.
+ */
+export function allWholeClasses(selectors: readonly string[]): boolean {
+  return selectors.length > 0 && selectors.every((s) => !s.includes('.'));
 }
 
 /** `runLabel`, with a suffix that makes the pairing visible in the Results
  *  view: a run started via the cross-extension handoff (`TestRunner.runFor`)
  *  was asked for by sf-org-deploy-wrapper, not ticked in the Tests view. */
-export function handoffLabel(scope: RunScope, count: number, alias: string): string {
-  return `${runLabel(scope, count, alias)} (from SF Deploy)`;
+export function handoffLabel(
+  scope: RunScope,
+  count: number,
+  alias: string,
+  wholeClasses = false,
+): string {
+  return `${runLabel(scope, count, alias, wholeClasses)} (from SF Deploy)`;
 }
 
 /**

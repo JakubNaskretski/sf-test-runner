@@ -177,6 +177,7 @@ function fakeCli(orgs: OrgInfo[] = [DEV, QA]): any {
   let current: OrgInfo | undefined;
   return {
     listOrgs: async (): Promise<OrgInfo[]> => orgs,
+    listOrgsFresh: async (): Promise<OrgInfo[]> => orgs,
     setCurrentOrg: (o: OrgInfo | undefined): void => {
       current = o;
     },
@@ -570,6 +571,43 @@ test('the one-time family adoption lands in the window store, its flag in global
   picker.dispose();
 });
 
+test("autoSelectDefault's live-list fallback does not clobber a real pick that lands while its own fetch is still in flight", async () => {
+  // No cached org at all forces the live-list fallback branch (the one with
+  // a real async gap) rather than the synchronous cached-org branch.
+  const state = memento({ [ORG_LIST_CACHE_KEY]: [], [PRIVATE_KEY]: DEV.username });
+  let resolveList: ((orgs: OrgInfo[]) => void) | undefined;
+  let notifyListCalled: (() => void) | undefined;
+  const listCalled = new Promise<void>((resolve) => {
+    notifyListCalled = resolve;
+  });
+  const cli: any = {
+    listOrgs: () => {
+      notifyListCalled!();
+      return new Promise<OrgInfo[]>((resolve) => {
+        resolveList = resolve;
+      });
+    },
+    setCurrentOrg: () => {},
+    getCurrentOrg: () => undefined,
+  };
+  const { picker, fired } = makePicker(state, cli);
+
+  const started = picker.autoSelectDefault();
+  await listCalled; // autoSelectDefault has claimed its token and is now awaiting the list
+  // A real pick lands WHILE the startup fetch is still pending — exactly
+  // what the cross-extension handoff's applyExternalPick does mid-startup.
+  picker.applyExternalPick(QA);
+  resolveList!([DEV, QA]); // the startup fetch finally resolves
+  await started;
+
+  assert.deepEqual(
+    fired.map((o) => o?.username),
+    [QA.username],
+    'only the real pick fired — the startup default must not land after it',
+  );
+  picker.dispose();
+});
+
 test('refreshOrgsQuietly returns the list it fetched and updates the cache with no selection change', async () => {
   // A stale cache (QA missing) behind a live list that already has it — the
   // scenario the handoff's unknown-org retry is for.
@@ -594,6 +632,9 @@ test('refreshOrgsQuietly rejects (and leaves the cache as it was) when the fetch
   const state = memento({ [ORG_LIST_CACHE_KEY]: [DEV] });
   const cli: any = {
     listOrgs: async () => {
+      throw new Error('should not be called — refreshOrgsQuietly uses listOrgsFresh');
+    },
+    listOrgsFresh: async () => {
       throw new Error('boom');
     },
     setCurrentOrg: () => {},
@@ -615,11 +656,10 @@ test('refreshOrgsQuietly never claims a generation, so a concurrent loud refresh
   // the time IT checks, and its result (and the picker's busy spinner) would
   // be dropped.
   const deferred: { resolve: (orgs: OrgInfo[]) => void }[] = [];
+  const pending = () => new Promise<OrgInfo[]>((resolve) => deferred.push({ resolve }));
   const cli: any = {
-    listOrgs: () =>
-      new Promise<OrgInfo[]>((resolve) => {
-        deferred.push({ resolve });
-      }),
+    listOrgs: pending,
+    listOrgsFresh: pending,
     setCurrentOrg: () => {},
     getCurrentOrg: () => undefined,
   };
