@@ -88,8 +88,13 @@ export class OrgPicker implements vscode.Disposable {
    *  shared-watcher de-dup, so an adopt can't race the persisted write. */
   private privateOrg: string | undefined;
 
-  /** Orders `applyUsername`'s async list-refresh resolutions: a rapid external
-   *  switch A→B→C must not let B's slower resolution land after C's. */
+  /** Orders every org application that has its OWN async gap before landing —
+   *  `applyUsername`'s list-refresh resolution (a rapid external switch
+   *  A→B→C must not let B's slower resolution land after C's) and
+   *  `autoSelectDefault`'s live-list fallback (a real pick — the user's own,
+   *  or the cross-extension handoff matching its target — that lands while
+   *  the startup fetch is still in flight must win, not be clobbered by the
+   *  startup default landing after it). */
   private readonly applyGen = new GenerationGuard();
 
   /** Orders org-list fetches (picker revalidate vs. explicit refresh): only the
@@ -229,6 +234,23 @@ export class OrgPicker implements vscode.Disposable {
   }
 
   /**
+   * Apply an org a CALLER already resolved itself — the cross-extension
+   * handoff matching its own target — through the exact path a hand pick
+   * takes (`applyPick`: family sync, the status bar, `onOrgChanged`'s own
+   * invalidation). Deliberately NOT routed through `selectByUsername`: that
+   * one re-looks-up the username against THIS picker's own cached
+   * `knownOrgs`, which can lag behind a fresher list the caller is already
+   * holding (e.g. the handoff's own `refreshOrgsQuietly` call lost a
+   * concurrent generation race to the startup reconcile's — a real org that
+   * list would have found looks, to `knownOrgs`, exactly like one that does
+   * not exist, and `selectByUsername` would silently no-op instead of
+   * switching). Taking the full `OrgInfo` sidesteps that entirely.
+   */
+  applyExternalPick(org: OrgInfo): void {
+    this.applyPick(org);
+  }
+
+  /**
    * Open the org picker. Resolves when the picker closes (picked or dismissed),
    * so callers can read the applied org afterwards. Cached orgs render
    * instantly; a background `sf org list` refreshes them in place — a just-added
@@ -319,10 +341,15 @@ export class OrgPicker implements vscode.Disposable {
    * the caller the list it fetched regardless — checking one org right now
    * needs the freshest answer even when the shared cache ends up keeping a
    * different, newer fetch's answer instead.
+   *
+   * Uses `listOrgsFresh`, not `listOrgs`: joining `listOrgs`'s shared
+   * in-flight promise would hand back whatever THAT older fetch started
+   * with, which may predate the very org this call exists to find (an org
+   * authenticated after that fetch was already running).
    */
   async refreshOrgsQuietly(): Promise<OrgInfo[]> {
     const before = this.listGen.current();
-    const orgs = await this.sfCli.listOrgs();
+    const orgs = await this.sfCli.listOrgsFresh();
     if (this.listGen.current() === before) this.setKnownOrgs(orgs);
     return orgs;
   }
@@ -401,6 +428,13 @@ export class OrgPicker implements vscode.Disposable {
         return;
       }
 
+      // Claimed BEFORE the list fetch, which is a real `sf org list` round
+      // trip (hundreds of ms): a real pick that lands while this awaits — a
+      // hand pick, or the cross-extension handoff matching its own target —
+      // must win. Without this, this fallback DEFAULT would unconditionally
+      // overwrite whatever just landed, the moment its own fetch finally
+      // resolves.
+      const applyToken = this.applyGen.next();
       const gen = this.listGen.next();
       let orgs: OrgInfo[];
       try {
@@ -410,12 +444,14 @@ export class OrgPicker implements vscode.Disposable {
         // (the list may be broken, not the org); with nothing named there is no
         // target at all, so say why instead of starting silently org-less.
         if (effective) {
-          this.applyOrg({
-            alias: effective,
-            username: effective,
-            instanceUrl: '',
-            isDefault: false,
-          });
+          if (this.applyGen.isCurrent(applyToken)) {
+            this.applyOrg({
+              alias: effective,
+              username: effective,
+              instanceUrl: '',
+              isDefault: false,
+            });
+          }
         } else {
           void vscode.window.showErrorMessage(
             `SF Tests: could not list orgs: ${err?.message ?? err}`,
@@ -442,7 +478,7 @@ export class OrgPicker implements vscode.Disposable {
         startup = orgs.find((o) => o.isDefault) ?? orgs[0];
       }
 
-      if (startup) this.applyOrg(startup);
+      if (startup && this.applyGen.isCurrent(applyToken)) this.applyOrg(startup);
     } catch {
       // silent on startup
     }

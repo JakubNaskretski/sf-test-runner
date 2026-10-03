@@ -28,6 +28,7 @@ import {
   handoffCapMessage,
   parseDeployResult,
   RunForOutcome,
+  shouldSwitchPicker,
 } from '../handoff';
 import { isLikelyProduction } from '../kit/orgs';
 import { TRACE_FLAG_MARGIN_MS, debugLogDocument } from '../salesforce/debugLogs';
@@ -47,6 +48,7 @@ import {
   TestMethodResult,
   TestRunSummary,
 } from '../types';
+import { keysForClasses } from '../ui/activeFileTests';
 import { resolveTargets } from '../ui/coverageTargets';
 import { ApexFileResolver } from '../ui/openApex';
 import { PanelState } from '../ui/panelState';
@@ -80,6 +82,12 @@ export interface TestRunnerDeps {
    *  not-deployed again this session. Only ever called for the org that was
    *  actually deployed to. */
   markDeployed(orgUsername: string, classNames: readonly string[]): Promise<void>;
+  /** Switch the org picker to `org` through the exact path a user pick
+   *  takes (family sync, the status bar label, the coverage/results
+   *  invalidation an org switch triggers — all of it), synchronously, so
+   *  its side effects land before a run's own record is created. Called
+   *  only when `shouldSwitchPicker` says the picker isn't already there. */
+  matchOrg(org: OrgInfo): void;
 }
 
 /**
@@ -218,6 +226,17 @@ export class TestRunner implements vscode.Disposable {
    * production confirmation or a dismissed/emptied not-deployed modal, both
    * of which the caller has already been told about via a toast and should
    * read as cancelled.
+   *
+   * Once the not-deployed step says go (and only then — nothing below runs
+   * for a cap refusal, a cancel, or a busy guard), SF Test Runner's OWN
+   * state is made to match before `start()`: the picker moves to `org` if
+   * it was not already there (`shouldSwitchPicker`/`matchOrg` — a real pick,
+   * so its coverage/results invalidation lands before this run's own record
+   * exists to be wiped by it), and the Tests view selection is replaced with
+   * exactly what is about to run (`keysForClasses`) — otherwise a follow-up
+   * click in the panel (Run, a CodeLens, re-run) would land on the picker's
+   * OLD org, and whatever was ticked before this handoff would still look
+   * selected even though none of it is what just ran.
    */
   async runFor(
     selectors: string[],
@@ -233,6 +252,13 @@ export class TestRunner implements vscode.Disposable {
       fromHandoff: true,
     });
     if (!confirmed) return { record: undefined, ranSelectors: selectors, busy: false };
+
+    if (shouldSwitchPicker(this.deps.getOrg(), org)) {
+      this.deps.matchOrg(org);
+      this.deps.output.appendLine(`Switched to ${org.alias} to match SF Deploy`);
+    }
+    this.deps.state.selectOnly(keysForClasses(this.deps.state.index, confirmed));
+
     const coverage = this.deps.state.runWithCoverage;
     const { record, busy } = await this.start(
       (alias) => handoffLabel('selected', confirmed.length, alias),

@@ -181,6 +181,21 @@ export function decideAfterDeploy(
 }
 
 /**
+ * Whether `runFor` needs to move the org picker to match the handoff's
+ * target before the run starts — the guard behind `TestRunnerDeps.matchOrg`.
+ * A pick is a real event (it clears coverage/results, publishes to family
+ * sync, fires `onOrgChanged`…), so this is skipped when the picker already
+ * shows the right org; `current` undefined (no org picked yet) always needs
+ * the switch.
+ */
+export function shouldSwitchPicker(
+  current: { username: string } | undefined,
+  target: { username: string },
+): boolean {
+  return !sameOrg(current?.username, target.username);
+}
+
+/**
  * What `sfTestRunner.runTestsFor` resolves with. `testClasses` is always the
  * resolved test class names, even when the run never started — a caller that
  * gets `noTests`/`busy`/`cancelled` still learns what was tried.

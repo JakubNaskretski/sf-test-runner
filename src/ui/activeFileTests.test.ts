@@ -1,7 +1,7 @@
 import { strict as assert } from 'node:assert';
 import { test } from 'node:test';
 import type { TestIndexSnapshot } from '../types';
-import { classNameOf, resolveTestClasses, testKeysForActiveFile } from './activeFileTests';
+import { classNameOf, keysForClasses, resolveTestClasses, testKeysForActiveFile } from './activeFileTests';
 
 const index: TestIndexSnapshot = {
   classes: [
@@ -127,4 +127,45 @@ test('resolveTestClasses: blank names, an empty input and an empty index are all
   assert.deepEqual(resolveTestClasses(index, ['', '   ']), []);
   assert.deepEqual(resolveTestClasses(index, []), []);
   assert.deepEqual(resolveTestClasses({ classes: [] }, ['AccountService']), []);
+});
+
+// ───────────────────────────── keysForClasses ──────────────────────────────
+
+test('keysForClasses: returns the method keys for each named class', () => {
+  assert.deepEqual(keysForClasses(index, ['AccountServiceTest']), [
+    'AccountServiceTest.testCreate',
+    'AccountServiceTest.testUpdate',
+  ]);
+});
+
+test('keysForClasses: an org-only class with unknown methods contributes its bare class key', () => {
+  assert.deepEqual(keysForClasses(index, ['LegacyQueueTest']), ['LegacyQueueTest']);
+});
+
+test('keysForClasses: several classes concatenate in the order given, case-insensitively', () => {
+  assert.deepEqual(keysForClasses(index, ['accountservicetest', 'TestInvoice']), [
+    'AccountServiceTest.testCreate',
+    'AccountServiceTest.testUpdate',
+    'TestInvoice.testNetTotal',
+  ]);
+});
+
+test('keysForClasses: a name the index does not know contributes nothing, without dropping the others', () => {
+  assert.deepEqual(keysForClasses(index, ['Unrelated', 'AccountServiceTest']), [
+    'AccountServiceTest.testCreate',
+    'AccountServiceTest.testUpdate',
+  ]);
+  assert.deepEqual(keysForClasses(index, ['Unrelated']), []);
+});
+
+test('keysForClasses: duplicate class names do not duplicate their keys', () => {
+  assert.deepEqual(keysForClasses(index, ['AccountServiceTest', 'AccountServiceTest']), [
+    'AccountServiceTest.testCreate',
+    'AccountServiceTest.testUpdate',
+  ]);
+});
+
+test('keysForClasses: an empty input or an empty index yields nothing', () => {
+  assert.deepEqual(keysForClasses(index, []), []);
+  assert.deepEqual(keysForClasses({ classes: [] }, ['AccountServiceTest']), []);
 });

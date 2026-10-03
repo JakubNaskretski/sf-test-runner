@@ -9,6 +9,7 @@ import {
   handoffCapMessage,
   parseDeployResult,
   parseHandoffArgs,
+  shouldSwitchPicker,
   toRunTestsForResult,
 } from './handoff';
 
@@ -412,4 +413,23 @@ test('decideAfterDeploy: failed/busy/error and a malformed/thrown (undefined) re
   }
   assert.equal(decideAfterDeploy(undefined, false, DEV, DEV), 'stopWithMessage');
   assert.equal(decideAfterDeploy(undefined, true, DEV, DEV), 'stopWithMessage');
+});
+
+// ─────────────────────────────── shouldSwitchPicker ─────────────────────────
+
+test('shouldSwitchPicker: false when the picker already shows the target org', () => {
+  assert.equal(shouldSwitchPicker(DEV, DEV), false);
+  assert.equal(shouldSwitchPicker({ username: 'dev@example.com' }, DEV), false);
+});
+
+test('shouldSwitchPicker: usernames compare case-insensitively, like every other org match', () => {
+  assert.equal(shouldSwitchPicker({ username: 'DEV@EXAMPLE.com' }, DEV), false);
+});
+
+test('shouldSwitchPicker: true when the picker shows a different org', () => {
+  assert.equal(shouldSwitchPicker(DEV, QA), true);
+});
+
+test('shouldSwitchPicker: true when the picker has no org at all yet', () => {
+  assert.equal(shouldSwitchPicker(undefined, DEV), true);
 });

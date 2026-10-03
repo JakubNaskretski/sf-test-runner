@@ -68,6 +68,14 @@ export function activate(context: vscode.ExtensionContext): void {
       await fetcher.markDeployed(orgUsername, classNames);
       rebuildIndex();
     },
+    // The exact path a hand pick in the QuickPick or the panel's <select>
+    // takes — family sync, the status bar, onOrgChanged's own invalidation —
+    // so the handoff moving the picker behaves identically to the user
+    // picking the org themselves. The full OrgInfo, not just a username:
+    // runTestsFor already resolved it (possibly from a fresher list than
+    // the picker's own cache has caught up to yet), so there is nothing to
+    // re-look-up.
+    matchOrg: (org) => orgPicker.applyExternalPick(org),
   });
   context.subscriptions.push(runner);
 
@@ -386,6 +394,7 @@ export function activate(context: vscode.ExtensionContext): void {
       return toRunTestsForResult({ record: undefined, ranSelectors: [], busy: true }, testClasses);
     }
 
+    testsView.reveal();
     resultsView.reveal();
     const outcome = await runner.runFor(testClasses, org, deployed ? { deployed: classNames } : undefined);
     return toRunTestsForResult(outcome, testClasses);
