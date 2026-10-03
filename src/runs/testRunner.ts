@@ -227,9 +227,10 @@ export class TestRunner implements vscode.Disposable {
    * of which the caller has already been told about via a toast and should
    * read as cancelled.
    *
-   * Once the not-deployed step says go (and only then — nothing below runs
-   * for a cap refusal, a cancel, or a busy guard), SF Test Runner's OWN
-   * state is made to match before `start()`: the picker moves to `org` if
+   * Once the run is really starting — the not-deployed step said go, the
+   * production confirm passed and the guard is held (start's `onAcquired`;
+   * nothing of this happens for a cap refusal, a cancel, a declined prod run
+   * or a busy guard) — SF Test Runner's OWN state is made to match: the picker moves to `org` if
    * it was not already there (`shouldSwitchPicker`/`matchOrg` — a real pick,
    * so its coverage/results invalidation lands before this run's own record
    * exists to be wiped by it), and the Tests view selection is replaced with
@@ -253,19 +254,25 @@ export class TestRunner implements vscode.Disposable {
     });
     if (!confirmed) return { record: undefined, ranSelectors: selectors, busy: false };
 
-    if (shouldSwitchPicker(this.deps.getOrg(), org)) {
-      this.deps.matchOrg(org);
-      this.deps.output.appendLine(`Switched to ${org.alias} to match SF Deploy`);
-    }
-    this.deps.state.selectOnly(keysForClasses(this.deps.state.index, confirmed));
-
     const coverage = this.deps.state.runWithCoverage;
     const { record, busy } = await this.start(
       (alias) => handoffLabel('selected', confirmed.length, alias),
       coverage,
       (orgUsername, token) =>
         this.deps.sfCli.runTestSelection(confirmed, orgUsername, { cancellation: token, coverage }),
-      { org, fromHandoff: true },
+      {
+        org,
+        fromHandoff: true,
+        // Only once the production confirm passed and the guard is held: a
+        // declined or busy run must leave the picker and selection alone.
+        onAcquired: () => {
+          if (shouldSwitchPicker(this.deps.getOrg(), org)) {
+            this.deps.matchOrg(org);
+            this.deps.output.appendLine(`Switched to ${org.alias} to match SF Deploy`);
+          }
+          this.deps.state.selectOnly(keysForClasses(this.deps.state.index, confirmed));
+        },
+      },
     );
     return { record, ranSelectors: confirmed, busy };
   }
@@ -750,10 +757,18 @@ export class TestRunner implements vscode.Disposable {
       orgUsername: string,
       token: vscode.CancellationToken,
     ) => Promise<StartedTestRun>,
-    opts?: { org?: OrgInfo; fromHandoff?: boolean },
+    opts?: { org?: OrgInfo; fromHandoff?: boolean; onAcquired?: () => void },
   ): Promise<{ record: RunRecord | undefined; busy: boolean }> {
     const acquired = await this.acquire(opts?.org);
     if (!acquired.org) return { record: undefined, busy: acquired.busy };
+    // Synchronous and before execute() creates the run's record, so an org
+    // switch's coverage/index invalidation can't touch this run. A throw here
+    // must not strand the guard execute() releases, so it only costs the switch.
+    try {
+      opts?.onAcquired?.();
+    } catch (err: any) {
+      this.deps.output.appendLine(`SF Tests: could not match SF Deploy's org — ${err?.message ?? err}`);
+    }
     await this.execute(acquired.org, labelFor, coverage, startRun, Boolean(opts?.fromHandoff));
     return { record: this.deps.state.run, busy: false };
   }
