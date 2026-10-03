@@ -55,6 +55,7 @@ import { PanelState } from '../ui/panelState';
 import type { OutcomeKind } from '../webview/protocol';
 import { pollUntilDone } from './pollRun';
 import {
+  allWholeClasses,
   coverageOrgChangedNote,
   dropClasses,
   excludeDeployed,
@@ -173,8 +174,9 @@ export class TestRunner implements vscode.Disposable {
 
     const coverage = state.runWithCoverage;
     const chosen = selectors;
+    const wholeClasses = allWholeClasses(chosen);
     await this.start(
-      (alias) => runLabel('selected', chosen.length, alias),
+      (alias) => runLabel('selected', chosen.length, alias, wholeClasses),
       coverage,
       (orgUsername, token) =>
         this.deps.sfCli.runTestSelection(chosen, orgUsername, { cancellation: token, coverage }),
@@ -255,8 +257,9 @@ export class TestRunner implements vscode.Disposable {
     if (!confirmed) return { record: undefined, ranSelectors: selectors, busy: false };
 
     const coverage = this.deps.state.runWithCoverage;
+    const wholeClasses = allWholeClasses(confirmed);
     const { record, busy } = await this.start(
-      (alias) => handoffLabel('selected', confirmed.length, alias),
+      (alias) => handoffLabel('selected', confirmed.length, alias, wholeClasses),
       coverage,
       (orgUsername, token) =>
         this.deps.sfCli.runTestSelection(confirmed, orgUsername, { cancellation: token, coverage }),

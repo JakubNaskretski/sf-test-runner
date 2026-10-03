@@ -16,11 +16,18 @@ import * as vscode from 'vscode';
 import { LocalTestScanner } from './discovery/localTests';
 import { OrgTestFetcher } from './discovery/orgTests';
 import { buildIndex } from './discovery/testIndex';
-import { parseHandoffShape, RunTestsForResult, toRunTestsForResult } from './handoff';
+import {
+  FollowOrgResult,
+  parseHandoffShape,
+  parseTargetOrgShape,
+  RunTestsForResult,
+  shouldSwitchPicker,
+  toRunTestsForResult,
+} from './handoff';
 import { sameOrg } from './orgMatch';
 import { TestRunner } from './runs/testRunner';
 import { SfCliService } from './salesforce/sfCliService';
-import { CommandLogEntry, TestClassEntry } from './types';
+import { CommandLogEntry, OrgInfo, TestClassEntry } from './types';
 import { classNameOf, resolveTestClasses, testKeysForActiveFile } from './ui/activeFileTests';
 import { ApexTestCodeLensProvider, RunLensArgs } from './ui/codeLens';
 import { CommandHistoryProvider, copyCommandToClipboard } from './ui/commandHistoryProvider';
@@ -336,6 +343,31 @@ export function activate(context: vscode.ExtensionContext): void {
   }
 
   /**
+   * The org lookup shared by `runTestsFor` and `followOrg`: known list
+   * first, then — on a miss — one quiet, fresh refresh (no progress
+   * notification, no toast; it does not touch the picker's own selection)
+   * before concluding the org really is unknown. Matched against whatever
+   * list THIS call ends up using, never re-reading `knownOrgList()` after
+   * the refresh — a concurrent newer fetch is free to win the shared cache
+   * without costing this lookup its own answer.
+   */
+  async function resolveHandoffOrg(targetOrg: string): Promise<{ org: OrgInfo } | { error: string }> {
+    let orgs = orgPicker.knownOrgList();
+    let org = orgs.find((o) => sameOrg(o.username, targetOrg));
+    if (!org) {
+      try {
+        orgs = await orgPicker.refreshOrgsQuietly();
+      } catch (err: any) {
+        const message = `could not list orgs: ${err?.message ?? err}`;
+        output.appendLine(`SF Tests: ${message}`);
+        return { error: message };
+      }
+      org = orgs.find((o) => sameOrg(o.username, targetOrg));
+    }
+    return org ? { org } : { error: `${targetOrg} is not a known org.` };
+  }
+
+  /**
    * `sfTestRunner.runTestsFor` — the cross-extension test handoff. A sibling
    * extension (sf-org-deploy-helper, right after a deploy) calls this with
    * the classes it just handled and the org it targeted; this plugin
@@ -352,34 +384,11 @@ export function activate(context: vscode.ExtensionContext): void {
     }
     const { classNames, targetOrg, deployed } = shape.value;
 
-    let orgs = orgPicker.knownOrgList();
-    let org = orgs.find((o) => sameOrg(o.username, targetOrg));
-    if (!org) {
-      // The cached org list might just be stale — refresh it once, quietly
-      // (no progress notification, no toast — this runs on every handoff
-      // whose org isn't cached yet, not just a user-driven refresh; it does
-      // not touch the picker's own selection either way) before concluding
-      // it really is unknown. Matched against the list THIS fetch returned,
-      // not knownOrgList() again — a concurrent newer fetch is allowed to
-      // win the shared cache without costing this lookup its own answer.
-      try {
-        orgs = await orgPicker.refreshOrgsQuietly();
-      } catch (err: any) {
-        const message = `could not list orgs: ${err?.message ?? err}`;
-        output.appendLine(`SF Tests: ${message}`);
-        return { status: 'error', testClasses: [], passed: 0, failed: 0, message };
-      }
-      org = orgs.find((o) => sameOrg(o.username, targetOrg));
+    const resolved = await resolveHandoffOrg(targetOrg);
+    if ('error' in resolved) {
+      return { status: 'error', testClasses: [], passed: 0, failed: 0, message: resolved.error };
     }
-    if (!org) {
-      return {
-        status: 'error',
-        testClasses: [],
-        passed: 0,
-        failed: 0,
-        message: `${targetOrg} is not a known org.`,
-      };
-    }
+    const { org } = resolved;
 
     await ensureScanned();
     const testClasses = resolveTestClasses(state.index, classNames);
@@ -398,6 +407,28 @@ export function activate(context: vscode.ExtensionContext): void {
     resultsView.reveal();
     const outcome = await runner.runFor(testClasses, org, deployed ? { deployed: classNames } : undefined);
     return toRunTestsForResult(outcome, testClasses);
+  }
+
+  /**
+   * `sfTestRunner.followOrg` — SF Deploy calls this after every successful
+   * deploy that sent Apex, even one that triggered no test run, so a
+   * follow-up Run/CodeLens/re-run in SF Test Runner lands on the org that
+   * was just deployed to. Runs nothing and touches no selection: it only
+   * ever moves the picker, through the same `applyExternalPick` path
+   * `runFor`'s own switch uses — and only when it is not there already.
+   */
+  async function followOrg(raw: unknown): Promise<FollowOrgResult> {
+    const shape = parseTargetOrgShape(raw);
+    if (!shape.ok) return { status: 'error', message: shape.message };
+
+    const resolved = await resolveHandoffOrg(shape.value.targetOrg);
+    if ('error' in resolved) return { status: 'error', message: resolved.error };
+    const { org } = resolved;
+
+    if (!shouldSwitchPicker(sfCli.getCurrentOrg(), org)) return { status: 'unchanged' };
+    orgPicker.applyExternalPick(org);
+    output.appendLine(`Switched to ${org.alias} to match SF Deploy`);
+    return { status: 'ok' };
   }
 
   context.subscriptions.push(
@@ -437,6 +468,9 @@ export function activate(context: vscode.ExtensionContext): void {
     ),
     vscode.commands.registerCommand('sfTestRunner.runTestsFor', (args?: unknown) =>
       runTestsFor(args),
+    ),
+    vscode.commands.registerCommand('sfTestRunner.followOrg', (args?: unknown) =>
+      followOrg(args),
     ),
     vscode.commands.registerCommand('sfTestRunner.clearCommandHistory', () => commands.clear()),
     vscode.commands.registerCommand('sfTestRunner.copyCommand', (node?: unknown) => {

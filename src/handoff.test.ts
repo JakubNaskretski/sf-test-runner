@@ -9,6 +9,7 @@ import {
   handoffCapMessage,
   parseDeployResult,
   parseHandoffArgs,
+  parseTargetOrgShape,
   shouldSwitchPicker,
   toRunTestsForResult,
 } from './handoff';
@@ -110,6 +111,30 @@ test('a targetOrg that is not in the known org list is rejected', () => {
 test('an empty known-org list rejects every targetOrg', () => {
   const result = parseHandoffArgs({ classNames: ['A'], targetOrg: 'alice@example.com' }, []);
   assert.equal(result.ok, false);
+});
+
+// ───────────────────────────────── parseTargetOrgShape ──────────────────────
+
+test('parseTargetOrgShape accepts a well-formed targetOrg', () => {
+  const result = parseTargetOrgShape({ targetOrg: 'alice@example.com' });
+  assert.equal(result.ok, true);
+  assert.deepEqual(result.ok ? result.value : undefined, { targetOrg: 'alice@example.com' });
+});
+
+test('parseTargetOrgShape rejects the same shapes parseHandoffShape rejects for targetOrg', () => {
+  for (const raw of [
+    undefined,
+    null,
+    'alice@example.com',
+    { targetOrg: '' },
+    { targetOrg: '   ' },
+    { targetOrg: undefined },
+    { targetOrg: 7 },
+    { targetOrg: '-alice@example.com' },
+    {},
+  ]) {
+    assert.equal(parseTargetOrgShape(raw).ok, false, `expected ${JSON.stringify(raw)} to be rejected`);
+  }
 });
 
 // ───────────────────────────────── deployed ────────────────────────────────

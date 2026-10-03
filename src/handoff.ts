@@ -33,6 +33,33 @@ export type HandoffShapeResult =
 
 export type HandoffParseResult = HandoffShapeResult;
 
+/** The `targetOrg` shape rule every command that takes one shares
+ *  (`runTestsFor`, `followOrg`): a non-empty string that cannot read as a
+ *  CLI flag. Returns the error message, or undefined when it is fine. */
+function targetOrgShapeError(targetOrg: unknown): string | undefined {
+  if (typeof targetOrg !== 'string' || !targetOrg.trim() || targetOrg.startsWith('-')) {
+    return 'targetOrg must be a non-empty org username.';
+  }
+  return undefined;
+}
+
+export type TargetOrgShapeResult =
+  | { ok: true; value: { targetOrg: string } }
+  | { ok: false; message: string };
+
+/** Shape-only validation for a command whose only argument is `targetOrg`
+ *  (`followOrg`) — the same rule `parseHandoffShape` applies to its own
+ *  `targetOrg`, factored out so neither copies the other. */
+export function parseTargetOrgShape(raw: unknown): TargetOrgShapeResult {
+  if (typeof raw !== 'object' || raw === null) {
+    return { ok: false, message: 'Expected an object with targetOrg.' };
+  }
+  const { targetOrg } = raw as Record<string, unknown>;
+  const err = targetOrgShapeError(targetOrg);
+  if (err) return { ok: false, message: err };
+  return { ok: true, value: { targetOrg: targetOrg as string } };
+}
+
 /**
  * Everything about the args EXCEPT whether `targetOrg` is a known org — split
  * out so a caller whose org list might be stale can refresh it and re-check
@@ -54,9 +81,8 @@ export function parseHandoffShape(raw: unknown): HandoffShapeResult {
     return { ok: false, message: 'classNames must all be plain Apex identifiers.' };
   }
 
-  if (typeof targetOrg !== 'string' || !targetOrg.trim() || targetOrg.startsWith('-')) {
-    return { ok: false, message: 'targetOrg must be a non-empty org username.' };
-  }
+  const targetOrgErr = targetOrgShapeError(targetOrg);
+  if (targetOrgErr) return { ok: false, message: targetOrgErr };
 
   if (deployed !== undefined && typeof deployed !== 'boolean') {
     return { ok: false, message: 'deployed must be a boolean when present.' };
@@ -64,7 +90,11 @@ export function parseHandoffShape(raw: unknown): HandoffShapeResult {
 
   return {
     ok: true,
-    value: { classNames: [...classNames], targetOrg, ...(deployed !== undefined ? { deployed } : {}) },
+    value: {
+      classNames: [...classNames],
+      targetOrg: targetOrg as string,
+      ...(deployed !== undefined ? { deployed } : {}),
+    },
   };
 }
 
@@ -206,6 +236,18 @@ export interface RunTestsForResult {
   testClasses: string[];
   passed: number;
   failed: number;
+  message?: string;
+}
+
+/**
+ * What `sfTestRunner.followOrg` resolves with: `'ok'` when it switched the
+ * picker, `'unchanged'` when the picker already showed `targetOrg` (not an
+ * error — there was simply nothing to do), `'error'` for a validation
+ * failure or an unknown org. Runs nothing and touches no selection either
+ * way — it only ever moves the picker.
+ */
+export interface FollowOrgResult {
+  status: 'ok' | 'unchanged' | 'error';
   message?: string;
 }
 
