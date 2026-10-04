@@ -112,6 +112,51 @@ test('listOrgs keeps the fields the org badge classifies on', async () => {
   assert.equal(kitOrgs.isLikelyProduction(org), false);
 });
 
+test('concurrent listOrgsFresh calls share one fetch — a burst spawns one sf org list, not one per call', async () => {
+  const svc = new mod.SfCliService({ appendLine: () => {} } as any);
+  let calls = 0;
+  let resolve: (orgs: unknown[]) => void = () => {};
+  (svc as any).kit = {
+    listOrgs: (): Promise<unknown[]> => {
+      calls += 1;
+      return new Promise((r) => (resolve = r));
+    },
+  };
+  const burst = [svc.listOrgsFresh(), svc.listOrgsFresh(), svc.listOrgsFresh()];
+  assert.equal(calls, 1);
+  resolve([{ username: 'b@example.com', alias: 'B', instanceUrl: '' }]);
+  for (const r of await Promise.all(burst)) assert.deepEqual(r.map((o) => o.username), ['b@example.com']);
+  void svc.listOrgsFresh(); // left pending on purpose — only the spawn count matters
+  assert.equal(calls, 2, 'a call after the burst settled starts a new fetch');
+});
+
+test('listOrgsFresh bypasses the shared in-flight listOrgs promise — a caller that needs a definitely-fresh answer gets its own fetch', async () => {
+  const svc = new mod.SfCliService({ appendLine: () => {} } as any);
+  let calls = 0;
+  const resolvers: ((orgs: unknown[]) => void)[] = [];
+  (svc as any).kit = {
+    listOrgs: (): Promise<unknown[]> => {
+      calls += 1;
+      return new Promise((resolve) => resolvers.push(resolve));
+    },
+  };
+
+  const inflight = svc.listOrgs(); // call #1 — stays pending
+  assert.equal(calls, 1);
+
+  const fresh = svc.listOrgsFresh(); // must NOT join call #1
+  assert.equal(calls, 2, 'listOrgsFresh must trigger its own kit.listOrgs() call');
+
+  // The fresh call can resolve (and be used) before the older in-flight one.
+  resolvers[1]([{ username: 'b@example.com', alias: 'B', instanceUrl: '' }]);
+  const freshResult = await fresh;
+  assert.deepEqual(freshResult.map((o) => o.username), ['b@example.com']);
+
+  resolvers[0]([{ username: 'a@example.com', alias: 'A', instanceUrl: '' }]);
+  const inflightResult = await inflight;
+  assert.deepEqual(inflightResult.map((o) => o.username), ['a@example.com']);
+});
+
 test('a class name that is not an Apex identifier never reaches a SOQL string', async () => {
   const { svc, calls } = withCalls(() => ({ status: 0, result: { records: [] } }));
   await assert.rejects(

@@ -9,6 +9,8 @@ import {
   handoffCapMessage,
   parseDeployResult,
   parseHandoffArgs,
+  parseTargetOrgShape,
+  shouldSwitchPicker,
   toRunTestsForResult,
 } from './handoff';
 
@@ -109,6 +111,30 @@ test('a targetOrg that is not in the known org list is rejected', () => {
 test('an empty known-org list rejects every targetOrg', () => {
   const result = parseHandoffArgs({ classNames: ['A'], targetOrg: 'alice@example.com' }, []);
   assert.equal(result.ok, false);
+});
+
+// ───────────────────────────────── parseTargetOrgShape ──────────────────────
+
+test('parseTargetOrgShape accepts a well-formed targetOrg', () => {
+  const result = parseTargetOrgShape({ targetOrg: 'alice@example.com' });
+  assert.equal(result.ok, true);
+  assert.deepEqual(result.ok ? result.value : undefined, { targetOrg: 'alice@example.com' });
+});
+
+test('parseTargetOrgShape rejects the same shapes parseHandoffShape rejects for targetOrg', () => {
+  for (const raw of [
+    undefined,
+    null,
+    'alice@example.com',
+    { targetOrg: '' },
+    { targetOrg: '   ' },
+    { targetOrg: undefined },
+    { targetOrg: 7 },
+    { targetOrg: '-alice@example.com' },
+    {},
+  ]) {
+    assert.equal(parseTargetOrgShape(raw).ok, false, `expected ${JSON.stringify(raw)} to be rejected`);
+  }
 });
 
 // ───────────────────────────────── deployed ────────────────────────────────
@@ -412,4 +438,23 @@ test('decideAfterDeploy: failed/busy/error and a malformed/thrown (undefined) re
   }
   assert.equal(decideAfterDeploy(undefined, false, DEV, DEV), 'stopWithMessage');
   assert.equal(decideAfterDeploy(undefined, true, DEV, DEV), 'stopWithMessage');
+});
+
+// ─────────────────────────────── shouldSwitchPicker ─────────────────────────
+
+test('shouldSwitchPicker: false when the picker already shows the target org', () => {
+  assert.equal(shouldSwitchPicker(DEV, DEV), false);
+  assert.equal(shouldSwitchPicker({ username: 'dev@example.com' }, DEV), false);
+});
+
+test('shouldSwitchPicker: usernames compare case-insensitively, like every other org match', () => {
+  assert.equal(shouldSwitchPicker({ username: 'DEV@EXAMPLE.com' }, DEV), false);
+});
+
+test('shouldSwitchPicker: true when the picker shows a different org', () => {
+  assert.equal(shouldSwitchPicker(DEV, QA), true);
+});
+
+test('shouldSwitchPicker: true when the picker has no org at all yet', () => {
+  assert.equal(shouldSwitchPicker(undefined, DEV), true);
 });

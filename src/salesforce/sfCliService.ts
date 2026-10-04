@@ -124,6 +124,22 @@ export class SfCliService {
     }));
   }
 
+  /**
+   * A brand-new `sf org list` call, bypassing the shared in-flight promise
+   * above. For a caller that needs a definitely-fresh answer (the
+   * cross-extension handoff's unknown-org retry): joining an older fetch
+   * that was already running before the org it is looking for even logged
+   * in would just hand back the same stale answer that fetch started with.
+   */
+  async listOrgsFresh(): Promise<OrgInfo[]> {
+    // Fresh callers share one fetch among themselves, so a burst of calls can't
+    // spawn one `sf org list` each.
+    return (this.listOrgsFreshInflight ??= this.doListOrgs().finally(() => {
+      this.listOrgsFreshInflight = undefined;
+    }));
+  }
+  private listOrgsFreshInflight?: Promise<OrgInfo[]>;
+
   private async doListOrgs(): Promise<OrgInfo[]> {
     const kitOrgs = await this.logged(['org', 'list', '--skip-connection-status', '--json'], {}, () =>
       this.kit.listOrgs(),

@@ -2,6 +2,7 @@ import { strict as assert } from 'node:assert';
 import { test } from 'node:test';
 import type { RunRecord, TestIndexSnapshot, TestRunSummary } from '../types';
 import {
+  allWholeClasses,
   coverageOrgChangedNote,
   dropClasses,
   excludeDeployed,
@@ -88,9 +89,40 @@ test('runLabel names each scope', () => {
   assert.equal(runLabel('allInOrg', 0, 'acme-dev'), 'All tests incl. managed on acme-dev');
 });
 
+test('runLabel says "test class(es)" instead of "test(s)" when wholeClasses is true', () => {
+  assert.equal(runLabel('selected', 7, 'acme-dev', true), '7 test classes on acme-dev');
+  assert.equal(runLabel('selected', 1, 'acme-dev', true), '1 test class on acme-dev');
+});
+
+test('runLabel ignores wholeClasses for the org-wide scopes', () => {
+  assert.equal(runLabel('allLocal', 0, 'acme-dev', true), 'All local tests on acme-dev');
+  assert.equal(runLabel('allInOrg', 0, 'acme-dev', true), 'All tests incl. managed on acme-dev');
+});
+
 test('handoffLabel appends the "from SF Deploy" pairing marker to the plain runLabel', () => {
   assert.equal(handoffLabel('selected', 7, 'acme-dev'), '7 tests on acme-dev (from SF Deploy)');
   assert.equal(handoffLabel('selected', 1, 'acme-dev'), '1 test on acme-dev (from SF Deploy)');
+});
+
+test('handoffLabel passes wholeClasses through to runLabel', () => {
+  assert.equal(
+    handoffLabel('selected', 7, 'acme-dev', true),
+    '7 test classes on acme-dev (from SF Deploy)',
+  );
+});
+
+test('allWholeClasses: true only when every selector is a bare class (no method)', () => {
+  assert.equal(allWholeClasses(['AccountServiceTest', 'InvoiceCalculatorTest']), true);
+  assert.equal(allWholeClasses(['AccountServiceTest']), true);
+});
+
+test('allWholeClasses: false when any selector names a method', () => {
+  assert.equal(allWholeClasses(['AccountServiceTest.testCreate']), false);
+  assert.equal(allWholeClasses(['AccountServiceTest', 'InvoiceCalculatorTest.testNetTotal']), false);
+});
+
+test('allWholeClasses: false for an empty list — nothing is not a class selection', () => {
+  assert.equal(allWholeClasses([]), false);
 });
 
 test('summaryText header carries verdict, counts, org, id and an ISO timestamp', () => {

@@ -153,6 +153,11 @@
         "title": "Run Tests For (cross-extension handoff)"
       },
       {
+        "command": "sfTestRunner.followOrg",
+        "category": "SF Tests",
+        "title": "Follow Org (cross-extension handoff)"
+      },
+      {
         "command": "sfTestRunner.clearCommandHistory",
         "category": "SF Tests",
         "title": "Clear Command History",
@@ -193,6 +198,10 @@
         },
         {
           "command": "sfTestRunner.runTestsFor",
+          "when": "false"
+        },
+        {
+          "command": "sfTestRunner.followOrg",
           "when": "false"
         }
       ],
