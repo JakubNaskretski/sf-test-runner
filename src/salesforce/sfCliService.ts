@@ -132,8 +132,13 @@ export class SfCliService {
    * in would just hand back the same stale answer that fetch started with.
    */
   async listOrgsFresh(): Promise<OrgInfo[]> {
-    return this.doListOrgs();
+    // Fresh callers share one fetch among themselves, so a burst of calls can't
+    // spawn one `sf org list` each.
+    return (this.listOrgsFreshInflight ??= this.doListOrgs().finally(() => {
+      this.listOrgsFreshInflight = undefined;
+    }));
   }
+  private listOrgsFreshInflight?: Promise<OrgInfo[]>;
 
   private async doListOrgs(): Promise<OrgInfo[]> {
     const kitOrgs = await this.logged(['org', 'list', '--skip-connection-status', '--json'], {}, () =>

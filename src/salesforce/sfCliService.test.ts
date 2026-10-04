@@ -112,6 +112,24 @@ test('listOrgs keeps the fields the org badge classifies on', async () => {
   assert.equal(kitOrgs.isLikelyProduction(org), false);
 });
 
+test('concurrent listOrgsFresh calls share one fetch — a burst spawns one sf org list, not one per call', async () => {
+  const svc = new mod.SfCliService({ appendLine: () => {} } as any);
+  let calls = 0;
+  let resolve: (orgs: unknown[]) => void = () => {};
+  (svc as any).kit = {
+    listOrgs: (): Promise<unknown[]> => {
+      calls += 1;
+      return new Promise((r) => (resolve = r));
+    },
+  };
+  const burst = [svc.listOrgsFresh(), svc.listOrgsFresh(), svc.listOrgsFresh()];
+  assert.equal(calls, 1);
+  resolve([{ username: 'b@example.com', alias: 'B', instanceUrl: '' }]);
+  for (const r of await Promise.all(burst)) assert.deepEqual(r.map((o) => o.username), ['b@example.com']);
+  void svc.listOrgsFresh(); // left pending on purpose — only the spawn count matters
+  assert.equal(calls, 2, 'a call after the burst settled starts a new fetch');
+});
+
 test('listOrgsFresh bypasses the shared in-flight listOrgs promise — a caller that needs a definitely-fresh answer gets its own fetch', async () => {
   const svc = new mod.SfCliService({ appendLine: () => {} } as any);
   let calls = 0;
