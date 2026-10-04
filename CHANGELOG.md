@@ -2,6 +2,13 @@
 
 All notable changes to the "sf-test-runner" extension are documented here.
 
+## [0.16.1] - 2026-10-04
+
+- **Tests run where you deployed.** After SF Deploy Wrapper deploys Apex, this extension switches to that org, so running tests from here right after — Run, or the Run Test link in the editor — goes to the same org instead of whatever was picked before. A run started from SF Deploy does the same, and only once it really starts: declining a production run leaves your org and selection as they were.
+- **The selection matches what runs.** A run handed over by SF Deploy clears the Tests view selection and ticks exactly the classes it runs.
+- **Counts name classes too.** The Tests view says "1 class · 7 methods selected", and a run of whole classes is labelled "1 test class" rather than "1 test".
+- An org you just logged in to is found even while an older org-list refresh is still running.
+
 ## [0.16.0] - 2026-10-01
 
 - **Works together with SF Deploy Wrapper.** With both extensions installed, SF Deploy's new **Run tests** buttons (for the Apex you ticked, or for what a deploy just sent) start a run here, on the org you deployed to. It shows in the Results view marked "(from SF Deploy)", and SF Deploy gets a pass/fail summary back. Your org picker and selection are left alone.
