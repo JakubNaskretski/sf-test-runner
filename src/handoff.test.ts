@@ -10,6 +10,8 @@ import {
   deploySucceeded,
   explainHandoff,
   handoffCapMessage,
+  handoffKey,
+  joinableAfterFinish,
   joinNotes,
   MAX_HANDOFF_MESSAGE,
   parseDeployResult,
@@ -649,4 +651,33 @@ test('joinNotes: joins with a stop, keeps an existing stop, and cuts only betwee
   assert.equal(joinNotes(['aaaaaa', 'bbbbbb', 'cccccc'], 20), 'aaaaaa … and 2 more');
   assert.equal(joinNotes(['x'.repeat(30)], 10), `${'x'.repeat(9)}…`);
   assert.equal(joinNotes([]), '');
+});
+
+test('a handoff is the same request for the same org and the same set of test classes', () => {
+  const key = handoffKey('dev@acme.example', ['AcmeServiceTest', 'AcmeOtherTest']);
+  assert.equal(handoffKey('Dev@Acme.example', ['acmeothertest', 'AcmeServiceTest']), key);
+  assert.equal(
+    handoffKey('dev@acme.example', ['AcmeOtherTest', 'AcmeServiceTest', 'AcmeOtherTest']),
+    key,
+  );
+});
+
+test('another org, or another set of test classes, is a different request', () => {
+  const key = handoffKey('dev@acme.example', ['AcmeServiceTest', 'AcmeOtherTest']);
+  assert.notEqual(handoffKey('qa@acme.example', ['AcmeServiceTest', 'AcmeOtherTest']), key);
+  assert.notEqual(handoffKey('dev@acme.example', ['AcmeServiceTest']), key);
+  assert.notEqual(
+    handoffKey('dev@acme.example', ['AcmeServiceTest', 'AcmeOtherTest', 'AcmeThirdTest']),
+    key,
+  );
+});
+
+test('a finished handoff answers a late repeat unless it was declined or turned away', () => {
+  const base = { testClasses: ['AcmeServiceTest'], passed: 0, failed: 0 };
+  assert.equal(joinableAfterFinish({ ...base, status: 'passed' }), true);
+  assert.equal(joinableAfterFinish({ ...base, status: 'failed' }), true);
+  assert.equal(joinableAfterFinish({ ...base, status: 'error' }), true);
+  assert.equal(joinableAfterFinish({ ...base, status: 'noTests' }), true);
+  assert.equal(joinableAfterFinish({ ...base, status: 'cancelled' }), false);
+  assert.equal(joinableAfterFinish({ ...base, status: 'busy' }), false);
 });

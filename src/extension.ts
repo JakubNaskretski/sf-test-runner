@@ -376,7 +376,8 @@ export function activate(context: vscode.ExtensionContext): void {
    * anyone — every argument is validated by `parseHandoffShape` before any
    * of it reaches a CLI selector or an org lookup; the known-org check runs
    * separately here (rather than via `parseHandoffArgs`) so a miss can
-   * refresh the list once and retry before it is reported as unknown.
+   * refresh the list once and retry before it is reported as unknown. The
+   * same request arriving twice gets one run and one shared result.
    */
   async function runTestsFor(raw: unknown): Promise<RunTestsForResult> {
     const shape = parseHandoffShape(raw);
@@ -408,26 +409,41 @@ export function activate(context: vscode.ExtensionContext): void {
       return result;
     }
 
-    if (runner.isRunning) {
-      return explainHandoff(
+    // A repeat of the request already in progress joins it (see
+    // `TestRunner.handoff`); anything else while a run is going is busy.
+    const busy = (): RunTestsForResult =>
+      explainHandoff(
         toRunTestsForResult({ record: undefined, ranSelectors: [], busy: true }, testClasses),
         resolution,
       );
-    }
-
-    testsView.reveal();
-    resultsView.reveal();
-    const outcome = await runner.runFor(testClasses, org, deployed ? { deployed: classNames } : undefined);
-    const result = explainHandoff(toRunTestsForResult(outcome, testClasses), resolution, outcome.record);
-    if (result.message && result.message !== outcome.record?.error) {
-      output.appendLine(`SF Tests (from SF Deploy): ${result.message}`);
-    }
-    // An @IsTest class the org found empty is "no tests", not the generic
-    // "this run reported no test results" — say it in the Results view too.
-    if (result.status === 'noTests' && outcome.record && state.run?.id === outcome.record.id) {
-      state.updateRun({ error: result.message });
-    }
-    return result;
+    return runner.handoff(
+      org,
+      testClasses,
+      async () => {
+        testsView.reveal();
+        resultsView.reveal();
+        const outcome = await runner.runFor(
+          testClasses,
+          org,
+          deployed ? { deployed: classNames } : undefined,
+        );
+        const result = explainHandoff(
+          toRunTestsForResult(outcome, testClasses),
+          resolution,
+          outcome.record,
+        );
+        if (result.message && result.message !== outcome.record?.error) {
+          output.appendLine(`SF Tests (from SF Deploy): ${result.message}`);
+        }
+        // An @IsTest class the org found empty is "no tests", not the generic
+        // "this run reported no test results" — say it in the Results view too.
+        if (result.status === 'noTests' && outcome.record && state.run?.id === outcome.record.id) {
+          state.updateRun({ error: result.message });
+        }
+        return result;
+      },
+      busy,
+    );
   }
 
   /**

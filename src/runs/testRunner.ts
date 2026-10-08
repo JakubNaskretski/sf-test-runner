@@ -25,9 +25,13 @@ import {
   contributesCommand,
   decideAfterDeploy,
   deploySucceeded,
+  HANDOFF_JOIN_GRACE_MS,
   handoffCapMessage,
+  handoffKey,
+  joinableAfterFinish,
   parseDeployResult,
   RunForOutcome,
+  RunTestsForResult,
   shouldSwitchPicker,
 } from '../handoff';
 import { isLikelyProduction } from '../kit/orgs';
@@ -89,6 +93,19 @@ export interface TestRunnerDeps {
    *  its side effects land before a run's own record is created. Called
    *  only when `shouldSwitchPicker` says the picker isn't already there. */
   matchOrg(org: OrgInfo): void;
+  /** The clock behind the handoff's join window. Defaults to `Date.now`. */
+  now?(): number;
+}
+
+/** The latest handoff request: in flight until `finishedAt` is set, then
+ *  still joinable for `HANDOFF_JOIN_GRACE_MS` when `keep` says so. */
+interface HandoffRequest {
+  /** `handoffKey` — org username plus the sorted test classes. */
+  key: string;
+  /** What the first caller gets, and so what every joiner gets. */
+  result: Promise<RunTestsForResult>;
+  finishedAt?: number;
+  keep?: boolean;
 }
 
 /**
@@ -119,11 +136,12 @@ export class TestRunner implements vscode.Disposable {
   /** The untitled tab each log was opened in, so a second click focuses it
    *  instead of minting another dirty document. */
   private readonly logDocs = new Map<string, vscode.TextDocument>();
+  /** See `handoff`. Replaced by the next request that starts its own run. */
+  private handoffRequest: HandoffRequest | undefined;
 
   constructor(private readonly deps: TestRunnerDeps) {}
 
-  /** Whether a run currently holds the single-run guard — checked by callers
-   *  (the cross-extension test handoff) that must not even attempt a start. */
+  /** Whether a run currently holds the single-run guard. */
   get isRunning(): boolean {
     return this.guard.isRunning;
   }
@@ -224,7 +242,7 @@ export class TestRunner implements vscode.Disposable {
    *
    * `record` is undefined when the run never started: `error` is set only
    * for that refusal; otherwise `busy` distinguishes a guard race (a second
-   * handoff raced past the caller's own `isRunning` check) from a declined
+   * handoff raced past `handoff`'s own `isRunning` check) from a declined
    * production confirmation or a dismissed/emptied not-deployed modal, both
    * of which the caller has already been told about via a toast and should
    * read as cancelled.
@@ -278,6 +296,62 @@ export class TestRunner implements vscode.Disposable {
       },
     );
     return { record, ranSelectors: confirmed, busy };
+  }
+
+  /**
+   * The cross-extension handoff's way in, around `runFor`: `run` starts the
+   * run and builds the result its caller gets; `busy` is the answer when
+   * another run holds the guard.
+   *
+   * A repeat of the request in progress — the SAME org and the SAME set of
+   * test classes, e.g. one Run tests click that reached this plugin twice —
+   * joins it rather than being told a run is already going: it waits for
+   * that request and resolves with the very result object the first caller
+   * gets. That holds while the first one is still at its not-deployed or
+   * production question (so no second dialog), while it runs, and for
+   * `HANDOFF_JOIN_GRACE_MS` after it finished (`joinableAfterFinish`), so a
+   * copy landing just late doesn't start the same run again. Any other
+   * request while a run holds the guard stays `busy`.
+   */
+  async handoff(
+    org: OrgInfo,
+    testClasses: readonly string[],
+    run: () => Promise<RunTestsForResult>,
+    busy: () => RunTestsForResult,
+  ): Promise<RunTestsForResult> {
+    const key = handoffKey(org.username, testClasses);
+    const previous = this.handoffRequest;
+    if (previous?.key === key) {
+      if (previous.finishedAt === undefined) {
+        this.deps.output.appendLine(
+          `SF Tests (from SF Deploy): the same tests on ${org.alias} were asked for again — ` +
+            'joined the run already in progress.',
+        );
+        return previous.result;
+      }
+      if (previous.keep && this.now() - previous.finishedAt < HANDOFF_JOIN_GRACE_MS) {
+        this.deps.output.appendLine(
+          `SF Tests (from SF Deploy): the same tests on ${org.alias} were asked for again — ` +
+            'joined the run that just finished.',
+        );
+        return previous.result;
+      }
+    }
+    if (this.isRunning) return busy();
+
+    // In place before `run` takes its first step, so a repeat arriving while
+    // this one waits on a dialog or the org already finds it.
+    const request: HandoffRequest = { key, result: Promise.resolve().then(run) };
+    this.handoffRequest = request;
+    try {
+      const result = await request.result;
+      request.keep = joinableAfterFinish(result);
+      return result;
+    } finally {
+      // Whatever run this started has released the guard by now; this ends
+      // the request's in-flight life, leaving only the grace window.
+      request.finishedAt = this.now();
+    }
   }
 
   /** `RunLocalTests`: every test in the org except managed-package ones. */
@@ -1075,6 +1149,10 @@ export class TestRunner implements vscode.Disposable {
         `  ${info.className}: ${pct}% covered (${info.numLinesCovered}/${total} lines)`,
       );
     }
+  }
+
+  private now(): number {
+    return this.deps.now ? this.deps.now() : Date.now();
   }
 
   private handleError(err: unknown): void {

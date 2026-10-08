@@ -301,6 +301,36 @@ export function toRunTestsForResult(
   };
 }
 
+/**
+ * How long a finished handoff stays joinable: one Run tests click can reach
+ * this plugin twice, and a copy landing just after the first run finished
+ * should get that run's result rather than start the same run again.
+ */
+export const HANDOFF_JOIN_GRACE_MS = 10_000;
+
+/**
+ * Which handoff request this is, for telling a repeat of the run in progress
+ * apart from a new one: the org plus the SET of test classes. Usernames and
+ * Apex class names are both case-insensitive, and the order classes were
+ * resolved in (or a name listed twice) doesn't make it a different run.
+ */
+export function handoffKey(orgUsername: string, testClasses: readonly string[]): string {
+  const classes = [...new Set(testClasses.map((c) => c.toLowerCase()))].sort();
+  return `${orgUsername.toLowerCase()}|${classes.join(',')}`;
+}
+
+/**
+ * Whether a FINISHED handoff may answer a repeat that arrives after it, for
+ * the grace window. Not when it ended `cancelled` (the user said no to a
+ * question, or stopped the run) or `busy` (another run had the guard): a new
+ * request after either should be asked and tried again, not handed the old
+ * no. A repeat that arrives while the first is still going joins it whatever
+ * it ends as — both came from the same click.
+ */
+export function joinableAfterFinish(result: RunTestsForResult): boolean {
+  return result.status !== 'cancelled' && result.status !== 'busy';
+}
+
 /** Longest `message` a handoff result composes. The deploy panel shows it
  *  verbatim as a Status card title and cuts at 500 itself; stopping short of
  *  that here means a long list ends on "… and N more", not mid-word. */
