@@ -58,11 +58,28 @@ test('classifyBody rejects a plain service class', () => {
   assert.deepEqual(classifyBody('AcmeOrderService', SERVICE_BODY), { isTest: false, methods: [] });
 });
 
-test('classifyBody rejects an @IsTest helper with no test methods', () => {
+test('classifyBody keeps an @IsTest class with no recognised method, flagged annotatedOnly', () => {
+  // Flag first: the class-level @IsTest makes it a test class; buildIndex
+  // keeps it out of the visible list, the handoff can still run it by name.
   assert.deepEqual(classifyBody('AcmeTestDataFactory', HELPER_BODY), {
-    isTest: false,
+    isTest: true,
     methods: [],
+    annotatedOnly: true,
   });
+});
+
+test('classifyBody reads the class-level flag with attributes', () => {
+  const body = `@isTest(SeeAllData=true)\nprivate class AcmeSeeAll {\n  static void make() {}\n}`;
+  assert.deepEqual(classifyBody('AcmeSeeAll', body), {
+    isTest: true,
+    methods: [],
+    annotatedOnly: true,
+  });
+});
+
+test('classifyBody: a method-level @IsTest in a comment does not make a class a test', () => {
+  const body = `public class AcmeQuiet {\n  // @IsTest\n  static void a() {}\n}`;
+  assert.deepEqual(classifyBody('AcmeQuiet', body), { isTest: false, methods: [] });
 });
 
 /** A memento that behaves like globalState: reads what was written. */
@@ -129,6 +146,17 @@ test('fetch skips the Body query for names the local scan already classified', a
 
   // The non-test class stays in the record set so the cache is complete.
   assert.equal(result.classes.find((c) => c.name === 'AcmeOrderService')!.isTest, false);
+});
+
+test('fetch records an org-only @IsTest class with no recognised method as annotatedOnly', async () => {
+  const { cli } = fakeCli([{ id: '01p000000000010AAA', name: 'AcmeTestDataFactory' }], {
+    '01p000000000010AAA': HELPER_BODY,
+  });
+  const fetcher = new OrgTestFetcher(cli, fakeMemento());
+  const [record] = (await fetcher.fetch('acme-dev', [])).classes;
+  assert.equal(record.isTest, true);
+  assert.equal(record.annotatedOnly, true);
+  assert.deepEqual(record.methods, []);
 });
 
 test('a class whose Body came back empty is unclassified, never guessed', async () => {

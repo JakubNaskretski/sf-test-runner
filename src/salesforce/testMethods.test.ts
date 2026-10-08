@@ -179,3 +179,62 @@ test('findTestForTargets ignores a commented-out declaration and plain @IsTest',
   ];
   assert.deepEqual(findTestForTargets(src), []);
 });
+
+// ─────────────────── method shapes and the class-level flag ───────────────────
+
+/** Method names found in `body`, wrapped in an @IsTest class. */
+function methodsIn(body: string): string[] {
+  const src = `@IsTest\nprivate class AcmeShapesTest {\n${body}\n}`;
+  return findTestMethods(src.split('\n'), 'AcmeShapesTest').map((m) => m.methodName);
+}
+
+test('method shapes: annotation inline, with attributes, on the line above, legacy keyword', () => {
+  assert.deepEqual(methodsIn('  @IsTest static void t() {\n  }'), ['t']);
+  assert.deepEqual(methodsIn('  @IsTest(SeeAllData=true) static void t() {}'), ['t']);
+  assert.deepEqual(methodsIn('  @isTest\n  static void t() {}'), ['t']);
+  assert.deepEqual(methodsIn('  static testMethod void t() {}'), ['t']);
+});
+
+test('method shapes: unannotated methods inside an @IsTest class are not tests', () => {
+  assert.deepEqual(
+    methodsIn('  static void helper() {}\n  public static Account make() { return null; }'),
+    [],
+  );
+});
+
+test('a one-line "@IsTest public class X {" does not make the next method a test', () => {
+  const src = '@IsTest public class AcmeHelper {\n    public static void make() {}\n}';
+  assert.deepEqual(findTestMethods(src.split('\n'), 'AcmeHelper'), []);
+});
+
+test('a one-line annotated test method does not lend its annotation to the next method', () => {
+  assert.deepEqual(methodsIn('  @IsTest static void a() { }\n  static void b() {}'), ['a']);
+});
+
+test('a commented-out @IsTest or one inside a string literal is not an annotation', () => {
+  assert.deepEqual(methodsIn('  // @isTest\n  static void old() {}'), []);
+  assert.deepEqual(methodsIn('  /* @IsTest */\n  static void old() {}'), []);
+  assert.deepEqual(
+    methodsIn("  static void x() { System.debug('@isTest'); }\n  static void y() {\n    System.debug('@isTest marker');\n  }"),
+    [],
+  );
+});
+
+test('stacked annotations above a method still find the @IsTest among them', () => {
+  assert.deepEqual(methodsIn("  @IsTest\n  @SuppressWarnings('PMD')\n  static void t() {}"), ['t']);
+});
+
+test('findClassDecl reads the class-level @IsTest flag in every shape', () => {
+  const flag = (src: string): boolean | undefined => findClassDecl(src.split('\n'))?.isTestAnnotated;
+  assert.equal(flag('@isTest\npublic class AcmeHelper {\n}'), true);
+  assert.equal(flag('@IsTest public class AcmeHelper {\n}'), true);
+  assert.equal(flag('@isTest(SeeAllData=true)\nprivate class AcmeHelper {\n}'), true);
+  assert.equal(flag("@IsTest(testFor='ApexClass:AcmeOrder')\nprivate class AcmeOrderTest {\n}"), true);
+  assert.equal(flag("@SuppressWarnings('PMD')\n@IsTest\nprivate class AcmeHelper {\n}"), true);
+  assert.equal(flag('/** header */\n@IsTest\n\nprivate class AcmeHelper {\n}'), true);
+  // Not on the class: a plain class, a commented-out flag, a method-level one.
+  assert.equal(flag('public class AcmeService {\n}'), false);
+  assert.equal(flag('// @IsTest\npublic class AcmeService {\n}'), false);
+  assert.equal(flag('public class AcmeService {\n  @IsTest static void t() {}\n}'), false);
+  assert.equal(flag("@SuppressWarnings('PMD')\npublic class AcmeService {\n}"), false);
+});

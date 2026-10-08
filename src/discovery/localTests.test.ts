@@ -141,18 +141,74 @@ beforeEach(() => {
   watcherHandlers.delete.length = 0;
 });
 
-test('a scan finds test classes and leaves @IsTest helpers out', async () => {
+test('a scan keeps an @IsTest class with no recognised method, flagged annotatedOnly', async () => {
   files.set('/acme/classes/AcmeOrderTest.cls', TEST_CLASS);
   files.set('/acme/classes/AcmeTestDataFactory.cls', HELPER_CLASS);
   files.set('/acme/classes/AcmeOrderService.cls', PLAIN_CLASS);
 
   const scanner = newScanner();
   const entries = await scanner.ensureDiscovered();
-  assert.deepEqual(entries.map((e) => e.name), ['AcmeOrderTest']);
-  assert.equal(entries[0].source, 'local-only');
-  assert.equal(entries[0].uri, 'file:///acme/classes/AcmeOrderTest.cls');
-  assert.equal(entries[0].classLine, 1);
-  assert.deepEqual(entries[0].methods, [{ name: 'testOrder', line: 3 }]);
+  // Flag first: the class-level @IsTest is the class's own word that it is a
+  // test class. The plain service class is still not one.
+  assert.deepEqual(entries.map((e) => e.name), ['AcmeOrderTest', 'AcmeTestDataFactory']);
+  const [test, helper] = entries;
+  assert.equal(test.source, 'local-only');
+  assert.equal(test.uri, 'file:///acme/classes/AcmeOrderTest.cls');
+  assert.equal(test.classLine, 1);
+  assert.deepEqual(test.methods, [{ name: 'testOrder', line: 3 }]);
+  assert.equal(test.annotatedOnly, undefined);
+  assert.equal(helper.annotatedOnly, true);
+  assert.deepEqual(helper.methods, []);
+  assert.equal(helper.uri, 'file:///acme/classes/AcmeTestDataFactory.cls');
+  scanner.dispose();
+});
+
+test('the class-level flag is read with attributes and on the declaration line too', async () => {
+  files.set(
+    '/acme/classes/AcmeSeeAllHelper.cls',
+    `@isTest(SeeAllData=true)\nprivate class AcmeSeeAllHelper {\n    static void make() {}\n}`,
+  );
+  files.set(
+    '/acme/classes/AcmeInlineHelper.cls',
+    `@IsTest public class AcmeInlineHelper {\n    public static void make() {}\n}`,
+  );
+  // Method-level annotations only in a string or a comment: no flag, no tests.
+  files.set(
+    '/acme/classes/AcmeNotATest.cls',
+    `public class AcmeNotATest {\n    // @IsTest\n    static void a() { System.debug('@isTest'); }\n}`,
+  );
+
+  const scanner = newScanner();
+  const entries = await scanner.ensureDiscovered();
+  assert.deepEqual(
+    entries.map((e) => [e.name, e.annotatedOnly ?? false, e.methods.length]),
+    [
+      ['AcmeInlineHelper', true, 0],
+      ['AcmeSeeAllHelper', true, 0],
+    ],
+  );
+  scanner.dispose();
+});
+
+test('a test method appearing in an annotated-only class clears the flag', async () => {
+  files.set('/acme/classes/AcmeTestDataFactory.cls', HELPER_CLASS);
+  const scanner = newScanner();
+  const events: TestClassEntry[][] = [];
+  scanner.onDidChange((entries) => events.push(entries));
+  await scanner.ensureDiscovered();
+  assert.equal(scanner.current()[0].annotatedOnly, true);
+
+  files.set(
+    '/acme/classes/AcmeTestDataFactory.cls',
+    HELPER_CLASS.replace('    public static Account', '    @IsTest static void smoke() {}\n    public static Account'),
+  );
+  for (const fn of watcherHandlers.change) fn(fakeUri('/acme/classes/AcmeTestDataFactory.cls'));
+  await flush();
+  await flush();
+  const [entry] = scanner.current();
+  assert.equal(entry.annotatedOnly, undefined);
+  assert.deepEqual(entry.methods.map((m) => m.name), ['smoke']);
+  assert.equal(events.length, 2);
   scanner.dispose();
 });
 

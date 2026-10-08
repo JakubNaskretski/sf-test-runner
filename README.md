@@ -13,6 +13,7 @@ The **SF Tests** activity-bar icon opens four views. Each is a collapsible secti
 - **CodeLens** on test classes and methods — `▶ Run` and `Run with Coverage`, plus the last outcome.
 - **Cancel aborts in the org** — queued classes are marked Aborted; the class already executing finishes.
 - **Load Recent Test Runs** — pull in any recent async run of the org, including runs started from a terminal, CI, or lost to a window reload; it lands in the Results view like your own.
+- **Tests for what SF Deploy just deployed** — with SF Deploy Wrapper installed, its **Run tests** buttons hand over the deployed classes and this extension picks the tests, per class, flag first: a class declared `@IsTest` runs as its own test; otherwise the test classes that declare it in `@IsTest(testFor=…)`, else the first of `FooTest`/`TestFoo`/`Foo_Test`/`FooTests`, else — as a last resort, at most 10 and named in the result — the local test classes whose code mentions it. When nothing matches, the result says what was checked.
 - **Production runs ask first** — a run against an org classified as production needs a modal confirmation before anything starts.
 - **Command log** — every CLI invocation with its full command, duration and any error; **Copy Command** drops the exact invocation into your clipboard. Starts collapsed.
 - **Your org is your own** — the choice made here is remembered by this extension, per VS Code window (each open workspace keeps its own target org), and does not follow the org other tools select. Set `sfTestRunner.syncOrgWithFamily` to `true` to follow (and publish) the org shared with the other Skrety Salesforce extensions.
@@ -72,7 +73,7 @@ Because we never embed your access token directly, your `sf` CLI auth is the sin
 
 ## Known limitations
 
-- Workspace discovery is a regex scan of your `.cls` sources, not an Apex parser. A test the CLI ran but the scan did not find still appears in the Results view under its class. A class annotated `@IsTest` with no test methods in it — a data factory, a callout mock — is deliberately not listed, since running it could only fail.
+- Workspace discovery is a regex scan of your `.cls` sources, not an Apex parser. A test the CLI ran but the scan did not find still appears in the Results view under its class. A class annotated `@IsTest` with no test methods the scan recognises — a data factory, a callout mock — is deliberately not listed in the Tests view and gets no CodeLens. When SF Deploy hands over such a class it just deployed, it is still run by its own name and the org decides what in it is a test.
 - Org discovery reads class source in batches; on an org with thousands of classes not present in your workspace the first fetch takes a while. It is cached per org afterwards.
 - A run only reports coverage for the classes it exercised — never for the test class itself, which is how Salesforce reports it. So after running `FooTest` you see the coverage in `Foo`.
 - Classes only: triggers are not discovered as tests, and a trigger's coverage is shown in the table but not painted.

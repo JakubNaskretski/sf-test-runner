@@ -37,6 +37,9 @@ export interface OrgClassRecord {
   /** The org listed the class but its `Body` came back empty, so we never
    *  classified it. Honest "unknown", never guessed from the name. */
   methodsUnknown?: boolean;
+  /** `isTest` because the class declaration carries `@IsTest`, though no
+   *  method in it was recognised as a test (`methods` is empty). */
+  annotatedOnly?: boolean;
 }
 
 export interface OrgTestClasses {
@@ -182,8 +185,14 @@ export class OrgTestFetcher {
           classes.push({ ...base, isTest: false, methods: [], methodsUnknown: true });
           continue;
         }
-        const { isTest, methods, testFor } = classifyBody(row.name, body);
-        classes.push({ ...base, isTest, methods, ...(testFor ? { testFor } : {}) });
+        const { isTest, methods, testFor, annotatedOnly } = classifyBody(row.name, body);
+        classes.push({
+          ...base,
+          isTest,
+          methods,
+          ...(testFor ? { testFor } : {}),
+          ...(annotatedOnly ? { annotatedOnly } : {}),
+        });
       }
     }
 
@@ -196,9 +205,12 @@ export class OrgTestFetcher {
 /**
  * Whether an Apex source body is a test class, and which methods are its tests.
  *
- * Same rules as the local scan, including the one that matters most: `@IsTest`
- * on a class with no test methods in it is a helper (TestDataFactory, an
- * HttpCalloutMock), not a test class, and must not become a runnable row.
+ * Same rules as the local scan, flag first: a class whose declaration carries
+ * `@IsTest` IS a test class even when no method in it is recognised — it comes
+ * back `annotatedOnly`, which `buildIndex` keeps out of the visible list (a
+ * TestDataFactory or an HttpCalloutMock must not become a runnable row) but
+ * the cross-extension handoff can still run by name. Without the class-level
+ * flag, a body with no recognised test method is not a test class.
  *
  * Methods deliberately carry no `line`: the line would index the org's copy of
  * the source, and an org-only class has no file in the workspace to open at it.
@@ -206,17 +218,18 @@ export class OrgTestFetcher {
 export function classifyBody(
   name: string,
   body: string,
-): { isTest: boolean; methods: TestMethodEntry[]; testFor?: string[] } {
+): { isTest: boolean; methods: TestMethodEntry[]; testFor?: string[]; annotatedOnly?: boolean } {
   if (!hasApexTests(body)) return { isTest: false, methods: [] };
   const lines = body.split(/\r?\n/);
   const decl = findClassDecl(lines);
   const methods = findTestMethods(lines, decl?.className ?? name);
-  if (methods.length === 0) return { isTest: false, methods: [] };
+  if (methods.length === 0 && !decl?.isTestAnnotated) return { isTest: false, methods: [] };
   const testFor = findTestForTargets(lines);
   return {
     isTest: true,
     methods: methods.map((m) => ({ name: m.methodName })),
     ...(testFor.length > 0 ? { testFor } : {}),
+    ...(methods.length === 0 ? { annotatedOnly: true } : {}),
   };
 }
 

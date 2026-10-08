@@ -131,3 +131,42 @@ test('the union is sorted by name', () => {
     'ZetaAcmeTest',
   ]);
 });
+
+test('annotated-only classes are kept out of the visible list, in their own', () => {
+  const helper: TestClassEntry = { ...localEntry('AcmeTestDataFactory', []), annotatedOnly: true };
+  const index = buildIndex(
+    [localEntry('AcmeOrderTest', ['testOrder']), helper],
+    orgClasses([
+      {
+        name: 'AcmeOrgHelper',
+        orgId: '01p000000000011AAA',
+        isTest: true,
+        methods: [],
+        annotatedOnly: true,
+      },
+      // The org's copy may be annotated-only while the local file has methods:
+      // the local copy decides, so it stays visible.
+      {
+        name: 'AcmeOrderTest',
+        orgId: '01p000000000012AAA',
+        isTest: true,
+        methods: [],
+        annotatedOnly: true,
+      },
+    ]),
+  );
+  assert.deepEqual(index.classes.map((c) => c.name), ['AcmeOrderTest']);
+  assert.equal(index.classes[0].annotatedOnly, undefined);
+  assert.deepEqual(
+    (index.annotatedOnly ?? []).map((c) => [c.name, c.source]),
+    [
+      ['AcmeOrgHelper', 'org-only'],
+      ['AcmeTestDataFactory', 'local-only'],
+    ],
+  );
+});
+
+test('with no annotated-only class the snapshot carries no annotatedOnly list', () => {
+  const index = buildIndex([localEntry('AcmeOrderTest', ['testOrder'])]);
+  assert.equal('annotatedOnly' in index, false);
+});

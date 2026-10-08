@@ -1,7 +1,14 @@
 import { strict as assert } from 'node:assert';
 import { test } from 'node:test';
 import type { TestIndexSnapshot } from '../types';
-import { classNameOf, keysForClasses, resolveTestClasses, testKeysForActiveFile } from './activeFileTests';
+import {
+  classNameOf,
+  keysForClasses,
+  MAX_REFERENCING_TESTS,
+  resolveHandoff,
+  resolveTestClasses,
+  testKeysForActiveFile,
+} from './activeFileTests';
 
 const index: TestIndexSnapshot = {
   classes: [
@@ -127,6 +134,132 @@ test('resolveTestClasses: blank names, an empty input and an empty index are all
   assert.deepEqual(resolveTestClasses(index, ['', '   ']), []);
   assert.deepEqual(resolveTestClasses(index, []), []);
   assert.deepEqual(resolveTestClasses({ classes: [] }, ['AccountService']), []);
+});
+
+// ─────────────────── resolveHandoff: flag, semantics, references ───────────────────
+
+const handoffIndex: TestIndexSnapshot = {
+  classes: [
+    { name: 'AcmeOrderTest', source: 'both', methods: [{ name: 'testTotals' }] },
+    { name: 'AcmeBillingTest', source: 'both', methods: [{ name: 'testInvoice' }] },
+    { name: 'AcmeRefundTest', source: 'local-only', methods: [{ name: 'testRefund' }] },
+  ],
+  annotatedOnly: [
+    { name: 'AcmeHelper', source: 'both', methods: [], annotatedOnly: true },
+    { name: 'AcmeTestDataFactory', source: 'both', methods: [], annotatedOnly: true },
+  ],
+};
+
+test('resolveHandoff: a deployed @IsTest class with no recognised method runs as its own test', () => {
+  const res = resolveHandoff(handoffIndex, ['AcmeHelper']);
+  assert.deepEqual(res.testClasses, ['AcmeHelper']);
+  assert.deepEqual(res.matches, [{ name: 'AcmeHelper', step: 'annotated', testClasses: ['AcmeHelper'] }]);
+  // Case-insensitive, like every other lookup here; the index spelling is sent.
+  assert.deepEqual(resolveTestClasses(handoffIndex, ['acmehelper']), ['AcmeHelper']);
+});
+
+test('resolveHandoff: the flag wins over the semantics — an annotated class is not swapped for its namesake test', () => {
+  const idx: TestIndexSnapshot = {
+    ...handoffIndex,
+    classes: [
+      ...handoffIndex.classes,
+      { name: 'AcmeHelperTest', source: 'both', methods: [{ name: 't' }] },
+      { name: 'AcmeDeclares', source: 'both', methods: [{ name: 't' }], testFor: ['AcmeHelper'] },
+    ],
+  };
+  assert.deepEqual(resolveTestClasses(idx, ['AcmeHelper']), ['AcmeHelper']);
+});
+
+test('resolveHandoff: a deployed test class is "own"; testFor and naming keep their order after it', () => {
+  const idx: TestIndexSnapshot = {
+    classes: [
+      { name: 'AcmeOrderTest', source: 'both', methods: [{ name: 't' }] },
+      { name: 'AcmeDeclaresOrder', source: 'both', methods: [{ name: 't' }], testFor: ['AcmeOrder'] },
+      { name: 'AcmeLedgerTest', source: 'both', methods: [{ name: 't' }] },
+    ],
+  };
+  const res = resolveHandoff(idx, ['AcmeOrderTest', 'AcmeOrder', 'AcmeLedger']);
+  assert.deepEqual(
+    res.matches.map((m) => [m.name, m.step, m.testClasses]),
+    [
+      ['AcmeOrderTest', 'own', ['AcmeOrderTest']],
+      ['AcmeOrder', 'testFor', ['AcmeDeclaresOrder']],
+      ['AcmeLedger', 'naming', ['AcmeLedgerTest']],
+    ],
+  );
+});
+
+test('resolveHandoff: without sources an unmatched class reports none', () => {
+  const res = resolveHandoff(handoffIndex, ['AcmeUtil']);
+  assert.deepEqual(res.testClasses, []);
+  assert.deepEqual(res.matches, [{ name: 'AcmeUtil', step: 'none', testClasses: [] }]);
+});
+
+test('resolveHandoff: referencing tests are offered only when nothing else matched, by whole word, sorted', () => {
+  const sources = [
+    { name: 'AcmeRefundTest', text: 'private class AcmeRefundTest {\n  static void t() { AcmeUtil.round(1); }\n}' },
+    { name: 'AcmeOrderTest', text: 'private class AcmeOrderTest {\n  static void t() { new AcmeUtil(); }\n}' },
+    { name: 'AcmeBillingTest', text: 'private class AcmeBillingTest { AcmeUtil::class; }' },
+  ];
+  const res = resolveHandoff(handoffIndex, ['AcmeUtil'], sources);
+  assert.deepEqual(res.matches, [
+    {
+      name: 'AcmeUtil',
+      step: 'referencing',
+      testClasses: ['AcmeBillingTest', 'AcmeOrderTest', 'AcmeRefundTest'],
+    },
+  ]);
+  // A semantic match is not widened by references.
+  const withNaming: TestIndexSnapshot = {
+    ...handoffIndex,
+    classes: [...handoffIndex.classes, { name: 'AcmeUtilTest', source: 'both', methods: [{ name: 't' }] }],
+  };
+  assert.deepEqual(resolveTestClasses(withNaming, ['AcmeUtil'], sources), ['AcmeUtilTest']);
+});
+
+test('resolveHandoff: a referencing match is a whole word, in code — not a substring, a comment or a string', () => {
+  const sources = [
+    { name: 'AcmeOrderTest', text: 'class AcmeOrderTest { void t() { AcmeUtilities.go(); MyAcmeUtil.go(); AcmeUtil_Old.go(); } }' },
+    { name: 'AcmeBillingTest', text: "class AcmeBillingTest {\n  // AcmeUtil.round()\n  void t() { System.debug('AcmeUtil'); }\n}" },
+  ];
+  const res = resolveHandoff(handoffIndex, ['AcmeUtil'], sources);
+  assert.deepEqual(res.matches, [{ name: 'AcmeUtil', step: 'none', testClasses: [] }]);
+  // Apex is case-insensitive: a differently-cased mention is still a mention.
+  const cased = resolveHandoff(handoffIndex, ['AcmeUtil'], [
+    { name: 'AcmeOrderTest', text: 'class AcmeOrderTest { void t() { acmeutil.go(); } }' },
+  ]);
+  assert.deepEqual(cased.testClasses, ['AcmeOrderTest']);
+});
+
+test('resolveHandoff: a referencing test is never the class itself, nor a class the index does not list', () => {
+  const sources = [
+    { name: 'AcmeUtil', text: 'public class AcmeUtil { AcmeUtil x; }' },
+    { name: 'AcmeGhostTest', text: 'class AcmeGhostTest { AcmeUtil.go(); }' },
+    { name: 'AcmeTestDataFactory', text: 'class AcmeTestDataFactory { AcmeUtil.go(); }' },
+  ];
+  assert.deepEqual(resolveHandoff(handoffIndex, ['AcmeUtil'], sources).matches[0].step, 'none');
+});
+
+test(`resolveHandoff: referencing tests are capped at ${MAX_REFERENCING_TESTS}, the rest counted`, () => {
+  const names = Array.from({ length: MAX_REFERENCING_TESTS + 3 }, (_, i) => `AcmeRef${String(i).padStart(2, '0')}Test`);
+  const idx: TestIndexSnapshot = {
+    classes: names.map((name) => ({ name, source: 'local-only' as const, methods: [{ name: 't' }] })),
+  };
+  const sources = names.map((name) => ({ name, text: `class ${name} { void t() { AcmeUtil.go(); } }` }));
+  const [match] = resolveHandoff(idx, ['AcmeUtil'], sources).matches;
+  assert.equal(match.step, 'referencing');
+  assert.deepEqual(match.testClasses, names.slice(0, MAX_REFERENCING_TESTS));
+  assert.equal(match.omitted, 3);
+});
+
+test('resolveHandoff: one batch mixes every step and dedupes across them', () => {
+  const sources = [{ name: 'AcmeOrderTest', text: 'class AcmeOrderTest { void t() { AcmeUtil.go(); } }' }];
+  const res = resolveHandoff(handoffIndex, ['AcmeHelper', 'AcmeOrder', 'AcmeUtil', 'AcmeNothing'], sources);
+  assert.deepEqual(res.testClasses, ['AcmeHelper', 'AcmeOrderTest']);
+  assert.deepEqual(
+    res.matches.map((m) => m.step),
+    ['annotated', 'naming', 'referencing', 'none'],
+  );
 });
 
 // ───────────────────────────── keysForClasses ──────────────────────────────

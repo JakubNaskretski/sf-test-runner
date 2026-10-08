@@ -80,6 +80,9 @@ export function handoffLabel(
  * FOR `orgUsername`. Until an org fetch happens (it is opt-in) every local class
  * carries the stamp by default, and after an org switch the stamp describes the
  * previous org — in both cases nothing has been checked, so nothing is claimed.
+ *
+ * The hidden `annotatedOnly` classes count too: the handoff can send one by
+ * name, and a local-only one fails the run exactly like any other.
  */
 export function localOnlyClasses(
   index: TestIndexSnapshot,
@@ -87,7 +90,9 @@ export function localOnlyClasses(
   orgUsername: string | undefined,
 ): string[] {
   if (!sameOrg(index.orgUsername, orgUsername)) return [];
-  const byName = new Map(index.classes.map((c) => [c.name.toLowerCase(), c]));
+  const byName = new Map(
+    [...index.classes, ...(index.annotatedOnly ?? [])].map((c) => [c.name.toLowerCase(), c]),
+  );
   const out = new Set<string>();
   for (const selector of selectors) {
     const entry = byName.get(classOfSelector(selector).toLowerCase());

@@ -15,7 +15,12 @@
  *  - a row the fetcher could not classify (no `Body` came back: `isTest: false`
  *    with `methodsUnknown`) is NOT a non-test, it is an unknown. It stays, and
  *    the panel offers it as a whole class — dropping it would hide a class the
- *    org really has.
+ *    org really has;
+ *  - a class declared `@IsTest` with no recognised test method (`annotatedOnly`,
+ *    local or org) goes to `annotatedOnly`, not `classes`: the Tests view, the
+ *    selection and the counts never see it, and only the cross-extension
+ *    handoff looks there, to run a deployed class of that kind by name. The
+ *    local copy decides, as everywhere else: local methods found ⇒ visible.
  *
  * No `vscode` import: this is the shape the whole panel renders from, so it
  * stays a pure function over plain data.
@@ -56,12 +61,16 @@ export function buildIndex(local: TestClassEntry[], org?: OrgTestClasses): TestI
       methods: record.methods,
       ...(record.testFor ? { testFor: record.testFor } : {}),
       ...(record.methodsUnknown ? { methodsUnknown: true } : {}),
+      ...(record.annotatedOnly && record.methods.length === 0 ? { annotatedOnly: true } : {}),
     });
   }
 
-  const classes = [...byName.values()].sort((a, b) => a.name.localeCompare(b.name));
+  const all = [...byName.values()].sort((a, b) => a.name.localeCompare(b.name));
+  const classes = all.filter((entry) => !entry.annotatedOnly);
+  const annotatedOnly = all.filter((entry) => entry.annotatedOnly);
   return {
     classes,
+    ...(annotatedOnly.length > 0 ? { annotatedOnly } : {}),
     ...(org ? { orgUsername: org.orgUsername, orgFetchedAt: org.fetchedAt } : {}),
   };
 }
