@@ -29,12 +29,7 @@ import { sameOrg } from './orgMatch';
 import { TestRunner } from './runs/testRunner';
 import { SfCliService } from './salesforce/sfCliService';
 import { CommandLogEntry, OrgInfo, TestClassEntry } from './types';
-import {
-  classNameOf,
-  resolveHandoff,
-  testKeysForActiveFile,
-  type TestSource,
-} from './ui/activeFileTests';
+import { classNameOf, resolveHandoff, testKeysForActiveFile } from './ui/activeFileTests';
 import { ApexTestCodeLensProvider, RunLensArgs } from './ui/codeLens';
 import { CommandHistoryProvider, copyCommandToClipboard } from './ui/commandHistoryProvider';
 import { CoverageDecorator, classNameFromUri } from './ui/coverageDecorator';
@@ -397,20 +392,16 @@ export function activate(context: vscode.ExtensionContext): void {
     const { org } = resolved;
 
     await ensureScanned();
-    // Flag, then semantics (own name / @IsTest, testFor, naming). Only when
-    // a name is still unmatched are the local test classes read, for the
-    // last-resort "which tests mention it" step.
-    let resolution = resolveHandoff(state.index, classNames);
-    if (resolution.matches.some((m) => m.step === 'none')) {
-      resolution = resolveHandoff(state.index, classNames, await readTestSources());
-    }
+    // The flag (the class is itself a test class, or declared @IsTest), and
+    // the semantics (testFor, else the naming conventions) — both, unioned.
+    const resolution = resolveHandoff(state.index, classNames);
     const { testClasses } = resolution;
     if (testClasses.length === 0) {
       // No toast here: this is the handoff path, and the caller shows its own
       // card for `noTests` — with this message, which says what was checked.
       // TR's own entry points (Select Tests for Active Class) keep theirs.
       const result = explainHandoff(
-        { status: 'noTests', testClasses: [], passed: 0, failed: 0 },
+        { status: 'noTests', orgAlias: org.alias, testClasses: [], passed: 0, failed: 0 },
         resolution,
       );
       output.appendLine(`SF Tests (from SF Deploy): ${result.message}`);
@@ -437,31 +428,6 @@ export function activate(context: vscode.ExtensionContext): void {
       state.updateRun({ error: result.message });
     }
     return result;
-  }
-
-  /**
-   * The source of every local test class the index lists, for the handoff's
-   * "referencing" step. Read on demand — only when a deployed class matched
-   * nothing else — in batches; a file that cannot be read is skipped (it just
-   * cannot be offered as referencing).
-   */
-  async function readTestSources(): Promise<TestSource[]> {
-    const local = state.index.classes.filter((entry) => entry.uri);
-    const out: TestSource[] = [];
-    for (let i = 0; i < local.length; i += 50) {
-      const batch = await Promise.all(
-        local.slice(i, i + 50).map(async (entry): Promise<TestSource | undefined> => {
-          try {
-            const bytes = await vscode.workspace.fs.readFile(vscode.Uri.parse(entry.uri as string));
-            return { name: entry.name, text: Buffer.from(bytes).toString('utf8') };
-          } catch {
-            return undefined;
-          }
-        }),
-      );
-      for (const source of batch) if (source) out.push(source);
-    }
-    return out;
   }
 
   /**

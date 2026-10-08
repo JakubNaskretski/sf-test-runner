@@ -13,7 +13,7 @@
 import { sameOrg } from './orgMatch';
 import { orgMovedDuringDeploy } from './runs/runLabel';
 import type { RunRecord } from './types';
-import { conventionNames, type HandoffMatch, type HandoffResolution } from './ui/activeFileTests';
+import { conventionNames, type HandoffResolution } from './ui/activeFileTests';
 
 const CLASS_NAME = /^\w+$/;
 const MAX_CLASS_NAMES = 200;
@@ -310,14 +310,8 @@ export const MAX_HANDOFF_MESSAGE = 480;
 export function unmatchedNote(name: string): string {
   return (
     `${name}: not a test class; no @IsTest(testFor) names it; ` +
-    `no test class named ${conventionNames(name).join('/')}; nothing references it`
+    `no test class named ${conventionNames(name).join('/')}`
   );
-}
-
-/** The disclosure for a class matched only by the referencing step. */
-export function referencingNote(match: HandoffMatch): string {
-  const more = match.omitted ? ` (and ${match.omitted} more, not run)` : '';
-  return `tests referencing ${match.name}: ${match.testClasses.join(', ')}${more}`;
 }
 
 /** The plain reading of an `@IsTest` class the org ran and found empty. */
@@ -326,7 +320,7 @@ export function emptyAnnotatedNote(testClass: string): string {
 }
 
 /**
- * The annotated-only classes (`step: 'annotated'`) that were sent to the org
+ * The annotated-only classes (`own: 'annotated'`) that were sent to the org
  * and came back with no result row at all — the org found no test method in
  * them. Only claimed for a run that finished with a summary: a cancelled,
  * refused or still-running one says nothing about what the class holds.
@@ -341,7 +335,7 @@ export function emptyAnnotatedClasses(
   const ran = new Set(ranClasses.map((name) => name.toLowerCase()));
   const reported = new Set(summary.results.map((r) => r.className.toLowerCase()));
   return resolution.matches
-    .filter((m) => m.step === 'annotated')
+    .filter((m) => m.own === 'annotated')
     .map((m) => m.testClasses[0])
     .filter((name) => ran.has(name.toLowerCase()) && !reported.has(name.toLowerCase()));
 }
@@ -361,17 +355,26 @@ export function joinNotes(parts: readonly string[], max = MAX_HANDOFF_MESSAGE): 
   return `${full.slice(0, max - 1)}…`;
 }
 
+/** The lead sentence of a `noTests` message. The deploy panel shows the
+ *  message in place of its own "Tests on <org>: …" title, so the org stays in
+ *  front when it is known. */
+function noTestsLead(orgAlias: string | undefined, what: string): string {
+  return orgAlias ? `Tests on ${orgAlias}: ${what}` : what.charAt(0).toUpperCase() + what.slice(1);
+}
+
 /**
  * Fold what the matching learned — and, once a run finished, what the org
  * reported — into a `runTestsFor` result's `message`:
- *  - nothing matched at all (`noTests`, no run): "No matching test class",
- *    then, per class, exactly what was checked;
+ *  - nothing matched at all (`noTests`, no run): "Tests on <org>: no matching
+ *    test class", then, per class, exactly what was checked;
  *  - every class that ran was an `@IsTest` class the org found no test
- *    method in, and the run reported nothing: that is `noTests` too, not an
- *    error, and the message says so in plain words;
- *  - otherwise the status stands, and the notes (referencing disclosures,
- *    empty annotated classes, unmatched classes) follow whatever message the
- *    run itself produced.
+ *    method in, and the run reported nothing (the org answers such a class
+ *    with outcome Skipped, 0 ran — not an error): that is `noTests` too, and
+ *    the message says so in plain words;
+ *  - a run that was cancelled keeps its own wording — notes about what a
+ *    run that never happened would have matched would replace it;
+ *  - otherwise the status stands, and the notes (empty annotated classes,
+ *    unmatched classes) follow whatever message the run itself produced.
  */
 export function explainHandoff(
   result: RunTestsForResult,
@@ -379,22 +382,30 @@ export function explainHandoff(
   record?: RunRecord,
 ): RunTestsForResult {
   const empty = emptyAnnotatedClasses(resolution, result.testClasses, record);
-  const notes = [
-    ...resolution.matches.filter((m) => m.step === 'referencing').map(referencingNote),
-    ...empty.map(emptyAnnotatedNote),
-    ...resolution.matches.filter((m) => m.step === 'none').map((m) => unmatchedNote(m.name)),
-  ];
+  const unmatched = resolution.matches
+    .filter((m) => m.testClasses.length === 0)
+    .map((m) => unmatchedNote(m.name));
+  const notes = [...empty.map(emptyAnnotatedNote), ...unmatched];
   if (result.status === 'noTests' && result.testClasses.length === 0) {
-    return { ...result, message: joinNotes(['No matching test class', ...notes]) };
+    return {
+      ...result,
+      message: joinNotes([noTestsLead(result.orgAlias, 'no matching test class'), ...notes]),
+    };
   }
-  if (notes.length === 0) return result;
+  if (notes.length === 0 || result.status === 'cancelled') return result;
 
   const emptyKeys = new Set(empty.map((name) => name.toLowerCase()));
   const onlyEmpty =
     record?.summary?.results.length === 0 &&
     result.testClasses.length > 0 &&
     result.testClasses.every((name) => emptyKeys.has(name.toLowerCase()));
-  if (onlyEmpty) return { ...result, status: 'noTests', message: joinNotes(notes) };
+  if (onlyEmpty) {
+    return {
+      ...result,
+      status: 'noTests',
+      message: joinNotes([noTestsLead(result.orgAlias, 'no test methods ran'), ...notes]),
+    };
+  }
 
   return { ...result, message: joinNotes(result.message ? [result.message, ...notes] : notes) };
 }

@@ -10,7 +10,6 @@
  * No `vscode` import: it takes the file NAME, not a document, so the rule that
  * decides what gets ticked is unit testable.
  */
-import { stripCommentsAndStrings as codeOnly } from '../salesforce/testMethods';
 import type { TestClassEntry, TestIndexSnapshot } from '../types';
 import { keysForEntry } from './selection';
 
@@ -54,35 +53,32 @@ export function classNameOf(fileName: string): string {
   return base.replace(/\.(cls|trigger)$/i, '').trim();
 }
 
-/** At most this many "referencing" test classes are offered for ONE deployed
- *  class: it is a fallback guess, and a name used everywhere (a selector, a
- *  utility) must not turn one deploy into a full test run. */
-export const MAX_REFERENCING_TESTS = 10;
-
-/** Which rule matched a deployed class — in the order they are tried. */
-export type HandoffStep =
-  /** The deployed class is itself a test class the index lists. */
+/** How a deployed class itself counts as a test class, if it does. */
+export type OwnMatch =
+  /** The index lists it as a test class (recognised test methods). */
   | 'own'
-  /** The deployed class is declared `@IsTest` but no method in it was
-   *  recognised: sent to the org by name, which decides what runs. */
-  | 'annotated'
+  /** Its declaration carries `@IsTest` but no method in it was recognised:
+   *  sent to the org by name, which decides what in it is a test. */
+  | 'annotated';
+
+/** Which semantic rule found test classes FOR a deployed class, if any. */
+export type SemanticMatch =
   /** Test classes declaring it via `@IsTest(testFor=…)`. */
   | 'testFor'
   /** The first `XTest`/`TestX`/`X_Test`/`XTests` the index has. */
-  | 'naming'
-  /** Local test classes whose code mentions it as a whole word. */
-  | 'referencing'
-  /** Nothing matched. */
-  | 'none';
+  | 'naming';
 
 export interface HandoffMatch {
   /** The deployed class, spelled as the caller spelled it. */
   name: string;
-  step: HandoffStep;
-  /** The test classes this name contributes, before batch-wide dedupe. */
+  /** Set when the deployed class is itself a test class (flag first). */
+  own?: OwnMatch;
+  /** Set when testFor or a naming convention found its tests. */
+  semantic?: SemanticMatch;
+  /** The test classes this name contributes — itself first when it is one,
+   *  then its semantic matches — before batch-wide dedupe. Empty when
+   *  nothing matched. */
   testClasses: string[];
-  /** `referencing` only: how many more matched beyond the cap (not run). */
-  omitted?: number;
 }
 
 export interface HandoffResolution {
@@ -92,27 +88,20 @@ export interface HandoffResolution {
   matches: HandoffMatch[];
 }
 
-/** A local test class and its source text, for the `referencing` step. */
-export interface TestSource {
-  name: string;
-  text: string;
-}
-
 /**
  * Which test CLASSES to run for a cross-extension handoff (`sfTestRunner.
- * runTestsFor`), and why — flag first, then semantics. Per deployed name,
- * case-insensitively, the first rule that matches wins:
- *  1. the class itself is a test class: the index lists it (`own`), or its
- *     declaration carries `@IsTest` though no method was recognised
- *     (`annotated`, from `index.annotatedOnly`) — it runs as its own test;
- *  2. every test class that DECLARES it via `@IsTest(testFor=…)`;
- *  3. the first naming-convention hit (`XTest`, `TestX`, `X_Test`, `XTests`);
- *  4. only when `sources` are given: the local test classes whose code (no
- *     comments, no string literals) mentions it as a whole word — `Helper.`,
- *     `new Helper(`, `Helper::` — sorted by name, capped at
- *     `MAX_REFERENCING_TESTS` (the rest counted in `omitted`). Never the
- *     class itself: a deployed class the index lists already matched step 1.
- * A name matching nothing contributes no test class and reports `none`.
+ * runTestsFor`), and why — the flag first, then the semantics, and BOTH: per
+ * deployed name, case-insensitively, the result is the union of
+ *  1. the class itself, when it is a test class: the index lists it (`own`),
+ *     or its declaration carries `@IsTest` though no method in it was
+ *     recognised (`annotated`, from `index.annotatedOnly`) — it runs by its
+ *     own name and the org decides what in it is a test;
+ *  2. its semantic matches: every test class that DECLARES it via
+ *     `@IsTest(testFor=…)`, or else the first naming-convention hit
+ *     (`XTest`, `TestX`, `X_Test`, `XTests`).
+ * A flag never hides the semantics: a test data factory `Helper` declared
+ * `@IsTest` still brings in the `HelperTest` (or the `testFor` test) that
+ * exercises it. A name matching nothing contributes no test class.
  *
  * Deliberately not `testKeysForActiveFile`: that one returns selection KEYS
  * (method-level) for a single file and collects every matching convention;
@@ -122,18 +111,11 @@ export interface TestSource {
 export function resolveHandoff(
   index: TestIndexSnapshot,
   classNames: readonly string[],
-  sources?: readonly TestSource[],
 ): HandoffResolution {
   const byName = new Map<string, TestClassEntry>();
   for (const entry of index.classes) byName.set(entry.name.toLowerCase(), entry);
   const annotated = new Map<string, TestClassEntry>();
   for (const entry of index.annotatedOnly ?? []) annotated.set(entry.name.toLowerCase(), entry);
-  /** Only the classes the index lists as tests may be offered as referencing
-   *  tests — a source for anything else (a stale read) is ignored. Stripped
-   *  once here, not once per deployed name. */
-  const listed = sources
-    ?.filter((source) => byName.has(source.name.toLowerCase()))
-    .map((source) => ({ name: source.name, code: codeOnly(source.text) }));
 
   const testClasses: string[] = [];
   const seen = new Set<string>();
@@ -148,7 +130,7 @@ export function resolveHandoff(
   for (const raw of classNames) {
     const name = raw.trim();
     if (!name) continue;
-    const match = matchOne(name, byName, annotated, listed);
+    const match = matchOne(name, byName, annotated);
     matches.push(match);
     for (const testClass of match.testClasses) add(testClass);
   }
@@ -159,46 +141,44 @@ function matchOne(
   name: string,
   byName: Map<string, TestClassEntry>,
   annotated: Map<string, TestClassEntry>,
-  sources: readonly { name: string; code: string }[] | undefined,
 ): HandoffMatch {
   const lower = name.toLowerCase();
+  const match: HandoffMatch = { name, testClasses: [] };
+  const push = (testClass: string): void => {
+    if (!match.testClasses.some((n) => n.toLowerCase() === testClass.toLowerCase())) {
+      match.testClasses.push(testClass);
+    }
+  };
 
+  // The flag: the deployed class is itself a test class.
   const own = byName.get(lower);
-  if (own) return { name, step: 'own', testClasses: [own.name] };
-  const flagged = annotated.get(lower);
-  if (flagged) return { name, step: 'annotated', testClasses: [flagged.name] };
+  const flagged = own ? undefined : annotated.get(lower);
+  if (own) {
+    match.own = 'own';
+    push(own.name);
+  } else if (flagged) {
+    match.own = 'annotated';
+    push(flagged.name);
+  }
 
+  // Then the semantics, whatever the flag said.
   const declaredBy = [...byName.values()].filter((entry) =>
     (entry.testFor ?? []).some((target) => target.toLowerCase() === lower),
   );
   if (declaredBy.length > 0) {
-    return { name, step: 'testFor', testClasses: declaredBy.map((entry) => entry.name) };
+    match.semantic = 'testFor';
+    for (const entry of declaredBy) push(entry.name);
+    return match;
   }
-
   for (const candidate of candidateNames(name)) {
     const entry = byName.get(candidate.toLowerCase());
-    if (entry) return { name, step: 'naming', testClasses: [entry.name] };
-  }
-
-  if (sources && /^\w+$/.test(name)) {
-    const mention = new RegExp(`(?<!\\w)${name}(?!\\w)`, 'i');
-    const hits = sources
-      .filter((source) => mention.test(source.code))
-      .map((source) => byName.get(source.name.toLowerCase())?.name ?? source.name)
-      .sort((a, b) => a.localeCompare(b));
-    const unique = [...new Set(hits)];
-    if (unique.length > 0) {
-      const kept = unique.slice(0, MAX_REFERENCING_TESTS);
-      return {
-        name,
-        step: 'referencing',
-        testClasses: kept,
-        ...(unique.length > kept.length ? { omitted: unique.length - kept.length } : {}),
-      };
+    if (entry) {
+      match.semantic = 'naming';
+      push(entry.name);
+      break;
     }
   }
-
-  return { name, step: 'none', testClasses: [] };
+  return match;
 }
 
 /** The naming conventions `resolveHandoff` tries, spelled out for a message. */
@@ -213,9 +193,8 @@ export function conventionNames(base: string): string[] {
 export function resolveTestClasses(
   index: TestIndexSnapshot,
   classNames: readonly string[],
-  sources?: readonly TestSource[],
 ): string[] {
-  return resolveHandoff(index, classNames, sources).testClasses;
+  return resolveHandoff(index, classNames).testClasses;
 }
 
 /**

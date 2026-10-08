@@ -124,7 +124,9 @@ export function stripComments(text: string): string {
  * returned `classLine` still indexes the `lines` the caller passed in.
  */
 export function findClassDecl(lines: string[]): TestClassInfo | null {
-  const scrubbed = stripComments(lines.join('\n')).split('\n');
+  // Strings blanked too: a `)` inside `@SuppressWarnings('a)b')` would end the
+  // annotation's argument list early and hide the `@IsTest` above it.
+  const scrubbed = stripCommentsAndStrings(lines.join('\n')).split('\n');
   for (let i = 0; i < scrubbed.length; i++) {
     const m = CLASS_DECL_RE.exec(scrubbed[i]);
     if (m) {
@@ -154,7 +156,7 @@ function blankStrings(text: string): string {
 
 /** Apex source with comments and string-literal contents blanked — what is
  *  left is code. Line structure and indices preserved. */
-export function stripCommentsAndStrings(text: string): string {
+function stripCommentsAndStrings(text: string): string {
   return blankStrings(stripComments(text));
 }
 
@@ -199,20 +201,29 @@ export function findTestMethods(lines: string[], className?: string): TestMethod
   return methods;
 }
 
+// What may follow the annotations on a line that still only OPENS a method
+// declaration: modifiers, nothing else — no name, no `(`, no brace.
+const MODIFIERS_ONLY_RE =
+  /^(?:(?:public|private|protected|global|static|override|final|virtual|abstract|testMethod|webservice)\s*)*$/i;
+
 /**
  * Look back over the preceding lines for an `@isTest` that belongs to THIS
  * declaration. `lines` are already comment-stripped, so comments are blank.
- * Only an annotation-ONLY line counts: `@IsTest public class Helper {` or
- * `@IsTest static void a() {}` above carries its own declaration, and the
- * annotation is that one's, not the next method's.
+ * A line counts when it is annotations followed by nothing but modifiers —
+ * `@IsTest`, `@isTest static` (the signature continues below). A line that
+ * carries its own declaration — `@IsTest public class Helper {`,
+ * `@IsTest static void a() {}` — owns its annotation, so it ends the look-back
+ * instead of lending it to the method below.
  */
 function hasAnnotationAbove(lines: string[], index: number): boolean {
   for (let j = index - 1; j >= 0 && j >= index - 4; j--) {
     const prev = lines[j].trim();
     if (prev === '') continue;
-    // Anything that is not purely annotations (a statement, another
+    // Anything that is not annotations-then-modifiers (a statement, another
     // declaration, a brace) ends the annotation block.
-    if (!prev.startsWith('@') || prev.replace(LEADING_ANNOTATIONS_RE, '').trim() !== '') return false;
+    if (!prev.startsWith('@') || !MODIFIERS_ONLY_RE.test(prev.replace(LEADING_ANNOTATIONS_RE, '').trim())) {
+      return false;
+    }
     if (IS_TEST_ANNOTATION_RE.test(prev)) return true;
   }
   return false;

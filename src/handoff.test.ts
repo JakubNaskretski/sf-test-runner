@@ -1,5 +1,6 @@
 import { strict as assert } from 'node:assert';
 import { test } from 'node:test';
+import { mapTestResult } from './salesforce/resultMapping';
 import type { RunRecord, TestMethodResult } from './types';
 import type { HandoffResolution } from './ui/activeFileTests';
 import {
@@ -487,50 +488,98 @@ function finished(results: Pick<TestMethodResult, 'className' | 'outcome'>[], ov
   });
 }
 
-test('explainHandoff: nothing matched says what was checked, per class', () => {
+const ANNOTATED_ONLY: HandoffResolution = {
+  testClasses: ['AcmeHelper'],
+  matches: [{ name: 'AcmeHelper', own: 'annotated', testClasses: ['AcmeHelper'] }],
+};
+
+test('explainHandoff: nothing matched says what was checked, per class, with the org in front', () => {
   const resolution: HandoffResolution = {
     testClasses: [],
-    matches: [{ name: 'AcmeHelper', step: 'none', testClasses: [] }],
+    matches: [{ name: 'AcmeHelper', testClasses: [] }],
   };
-  const result = explainHandoff(NO_TESTS, resolution);
+  const result = explainHandoff({ ...NO_TESTS, orgAlias: 'acme-dev' }, resolution);
   assert.equal(result.status, 'noTests');
   assert.equal(
     result.message,
-    'No matching test class. AcmeHelper: not a test class; no @IsTest(testFor) names it; ' +
-      'no test class named AcmeHelperTest/TestAcmeHelper/AcmeHelper_Test/AcmeHelperTests; nothing references it',
+    'Tests on acme-dev: no matching test class. AcmeHelper: not a test class; no @IsTest(testFor) names it; ' +
+      'no test class named AcmeHelperTest/TestAcmeHelper/AcmeHelper_Test/AcmeHelperTests',
   );
+  // No org known: the sentence still stands on its own.
+  assert.match(explainHandoff(NO_TESTS, resolution).message ?? '', /^No matching test class\. AcmeHelper: /);
 });
 
 test('explainHandoff: an @IsTest class the org found empty reads as noTests, in plain words', () => {
-  const resolution: HandoffResolution = {
-    testClasses: ['AcmeHelper'],
-    matches: [{ name: 'AcmeHelper', step: 'annotated', testClasses: ['AcmeHelper'] }],
-  };
   const run = toRunTestsForResult({ record: finished([]), ranSelectors: ['AcmeHelper'], busy: false }, ['AcmeHelper']);
   assert.equal(run.status, 'error');
-  const result = explainHandoff(run, resolution, finished([]));
+  const result = explainHandoff(run, ANNOTATED_ONLY, finished([]));
   assert.equal(result.status, 'noTests');
-  assert.equal(result.message, 'AcmeHelper: @isTest, but the org found no test methods in it');
+  assert.equal(
+    result.message,
+    'Tests on acme-dev: no test methods ran. AcmeHelper: @isTest, but the org found no test methods in it',
+  );
   assert.deepEqual(result.testClasses, ['AcmeHelper']);
 });
 
+test("explainHandoff: the org's Skipped / 0-ran answer for an @IsTest class maps to the note, not an error", () => {
+  // `sf apex get test` for a run of only an @IsTest class without test
+  // methods, as the org answers it: outcome Skipped, nothing ran, no tests.
+  const summary = mapTestResult({
+    summary: {
+      outcome: 'Skipped',
+      testsRan: 0,
+      passing: 0,
+      failing: 0,
+      skipped: 0,
+      passRate: '0%',
+      failRate: '0%',
+      testRunId: '707000000000001',
+      testTotalTime: '0 ms',
+      testExecutionTime: '0 ms',
+    },
+    tests: [],
+  });
+  assert.equal(summary.results.length, 0);
+  // What the runner records for a run that reported nothing (verdictOf).
+  const record = baseRecord({ status: 'error', error: 'This run reported no test results.', summary });
+  const run = toRunTestsForResult({ record, ranSelectors: ['AcmeHelper'], busy: false }, ['AcmeHelper']);
+  const result = explainHandoff(run, ANNOTATED_ONLY, record);
+  assert.equal(result.status, 'noTests');
+  assert.match(result.message ?? '', /AcmeHelper: @isTest, but the org found no test methods in it$/);
+  assert.doesNotMatch(result.message ?? '', /reported no test results/);
+});
+
 test('explainHandoff: an @IsTest class whose methods the org DID find needs no note', () => {
-  const resolution: HandoffResolution = {
-    testClasses: ['AcmeHelper'],
-    matches: [{ name: 'AcmeHelper', step: 'annotated', testClasses: ['AcmeHelper'] }],
-  };
   const record = finished([{ className: 'AcmeHelper', outcome: 'Pass' }]);
   const run = toRunTestsForResult({ record, ranSelectors: ['AcmeHelper'], busy: false }, ['AcmeHelper']);
-  assert.deepEqual(explainHandoff(run, resolution, record), run);
+  assert.deepEqual(explainHandoff(run, ANNOTATED_ONLY, record), run);
+});
+
+test('explainHandoff: an empty @IsTest factory run beside its testFor test keeps the pass, with a note', () => {
+  const resolution: HandoffResolution = {
+    testClasses: ['AcmeHelper', 'AcmeDeclares'],
+    matches: [
+      { name: 'AcmeHelper', own: 'annotated', semantic: 'testFor', testClasses: ['AcmeHelper', 'AcmeDeclares'] },
+    ],
+  };
+  const record = finished([{ className: 'AcmeDeclares', outcome: 'Pass' }]);
+  const run = toRunTestsForResult(
+    { record, ranSelectors: ['AcmeHelper', 'AcmeDeclares'], busy: false },
+    ['AcmeHelper', 'AcmeDeclares'],
+  );
+  const result = explainHandoff(run, resolution, record);
+  assert.equal(result.status, 'passed');
+  assert.equal(result.passed, 1);
+  assert.equal(result.message, 'AcmeHelper: @isTest, but the org found no test methods in it');
 });
 
 test('explainHandoff: a mixed run keeps its status and notes the empty @IsTest class and the unmatched one', () => {
   const resolution: HandoffResolution = {
     testClasses: ['AcmeHelper', 'AcmeOrderTest'],
     matches: [
-      { name: 'AcmeHelper', step: 'annotated', testClasses: ['AcmeHelper'] },
-      { name: 'AcmeOrder', step: 'naming', testClasses: ['AcmeOrderTest'] },
-      { name: 'AcmeGhost', step: 'none', testClasses: [] },
+      { name: 'AcmeHelper', own: 'annotated', testClasses: ['AcmeHelper'] },
+      { name: 'AcmeOrder', semantic: 'naming', testClasses: ['AcmeOrderTest'] },
+      { name: 'AcmeGhost', testClasses: [] },
     ],
   };
   const record = finished([{ className: 'AcmeOrderTest', outcome: 'Pass' }]);
@@ -544,48 +593,48 @@ test('explainHandoff: a mixed run keeps its status and notes the empty @IsTest c
 });
 
 test('explainHandoff: a cancelled run claims nothing about what an @IsTest class holds', () => {
-  const resolution: HandoffResolution = {
-    testClasses: ['AcmeHelper'],
-    matches: [{ name: 'AcmeHelper', step: 'annotated', testClasses: ['AcmeHelper'] }],
-  };
   const record = finished([], { status: 'cancelled', error: 'Run cancelled.' });
   const run = toRunTestsForResult({ record, ranSelectors: ['AcmeHelper'], busy: false }, ['AcmeHelper']);
-  const result = explainHandoff(run, resolution, record);
+  const result = explainHandoff(run, ANNOTATED_ONLY, record);
   assert.equal(result.status, 'cancelled');
   assert.equal(result.message, 'Run cancelled.');
 });
 
-test('explainHandoff: referencing tests are disclosed, including how many were left out', () => {
+test('explainHandoff: a run cancelled before it started keeps the plain cancel, not a list of notes', () => {
+  // A declined production confirm or a dismissed not-deployed modal: no
+  // message of its own, so the deploy panel shows its "run cancelled" title.
   const resolution: HandoffResolution = {
-    testClasses: ['AcmeBillingTest', 'AcmeOrderTest'],
+    testClasses: ['AcmeOrderTest'],
     matches: [
-      { name: 'AcmeUtil', step: 'referencing', testClasses: ['AcmeBillingTest', 'AcmeOrderTest'], omitted: 2 },
+      { name: 'AcmeOrder', semantic: 'naming', testClasses: ['AcmeOrderTest'] },
+      { name: 'AcmeGhost', testClasses: [] },
     ],
   };
-  const record = finished([
-    { className: 'AcmeBillingTest', outcome: 'Pass' },
-    { className: 'AcmeOrderTest', outcome: 'Fail' },
-  ]);
-  const run = toRunTestsForResult(
-    { record, ranSelectors: ['AcmeBillingTest', 'AcmeOrderTest'], busy: false },
-    ['AcmeBillingTest', 'AcmeOrderTest'],
-  );
-  const result = explainHandoff(run, resolution, record);
-  assert.equal(result.status, 'failed');
-  assert.equal(result.message, 'tests referencing AcmeUtil: AcmeBillingTest, AcmeOrderTest (and 2 more, not run)');
-  // Busy keeps its own sentence first.
+  const run = toRunTestsForResult({ record: undefined, ranSelectors: [], busy: false }, ['AcmeOrderTest']);
+  const result = explainHandoff(run, resolution);
+  assert.equal(result.status, 'cancelled');
+  assert.equal(result.message, undefined);
+});
+
+test('explainHandoff: a fully matched run gets no message of its own; busy keeps its sentence', () => {
+  const resolution: HandoffResolution = {
+    testClasses: ['AcmeOrderTest'],
+    matches: [{ name: 'AcmeOrder', semantic: 'naming', testClasses: ['AcmeOrderTest'] }],
+  };
+  const record = finished([{ className: 'AcmeOrderTest', outcome: 'Pass' }]);
+  const run = toRunTestsForResult({ record, ranSelectors: ['AcmeOrderTest'], busy: false }, ['AcmeOrderTest']);
+  assert.deepEqual(explainHandoff(run, resolution, record), run);
   const busy = explainHandoff(
     toRunTestsForResult({ record: undefined, ranSelectors: [], busy: true }, resolution.testClasses),
     resolution,
   );
   assert.equal(busy.status, 'busy');
-  assert.match(busy.message ?? '', /Wait for it to finish\. tests referencing AcmeUtil: /);
+  assert.equal(busy.message, 'A test run is already in progress. Wait for it to finish.');
 });
 
 test('explainHandoff: many unmatched classes stay within the cap and say how many were left out', () => {
   const matches = Array.from({ length: 12 }, (_, i) => ({
     name: `AcmeUnmatchedService${i}`,
-    step: 'none' as const,
     testClasses: [],
   }));
   const result = explainHandoff(NO_TESTS, { testClasses: [], matches });

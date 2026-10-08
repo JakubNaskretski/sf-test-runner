@@ -195,6 +195,12 @@ test('method shapes: annotation inline, with attributes, on the line above, lega
   assert.deepEqual(methodsIn('  static testMethod void t() {}'), ['t']);
 });
 
+test('method shapes: "@isTest static" on one line, the signature on the next', () => {
+  assert.deepEqual(methodsIn('  @isTest static\n  void testA() {}'), ['testA']);
+  assert.deepEqual(methodsIn('  @IsTest(SeeAllData=true) public static\n  void testB() {}'), ['testB']);
+  assert.deepEqual(methodsIn('  @isTest\n  static\n  void notSeen() {}'), []);
+});
+
 test('method shapes: unannotated methods inside an @IsTest class are not tests', () => {
   assert.deepEqual(
     methodsIn('  static void helper() {}\n  public static Account make() { return null; }'),
@@ -232,6 +238,8 @@ test('findClassDecl reads the class-level @IsTest flag in every shape', () => {
   assert.equal(flag("@IsTest(testFor='ApexClass:AcmeOrder')\nprivate class AcmeOrderTest {\n}"), true);
   assert.equal(flag("@SuppressWarnings('PMD')\n@IsTest\nprivate class AcmeHelper {\n}"), true);
   assert.equal(flag('/** header */\n@IsTest\n\nprivate class AcmeHelper {\n}'), true);
+  // A `)` inside a string argument does not end the annotation early.
+  assert.equal(flag("@IsTest\n@SuppressWarnings('a)b')\nprivate class AcmeHelper {\n}"), true);
   // Not on the class: a plain class, a commented-out flag, a method-level one.
   assert.equal(flag('public class AcmeService {\n}'), false);
   assert.equal(flag('// @IsTest\npublic class AcmeService {\n}'), false);
