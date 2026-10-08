@@ -25,10 +25,8 @@ import {
   contributesCommand,
   decideAfterDeploy,
   deploySucceeded,
-  HANDOFF_JOIN_GRACE_MS,
   handoffCapMessage,
   handoffKey,
-  joinableAfterFinish,
   parseDeployResult,
   RunForOutcome,
   RunTestsForResult,
@@ -93,19 +91,16 @@ export interface TestRunnerDeps {
    *  its side effects land before a run's own record is created. Called
    *  only when `shouldSwitchPicker` says the picker isn't already there. */
   matchOrg(org: OrgInfo): void;
-  /** The clock behind the handoff's join window. Defaults to `Date.now`. */
-  now?(): number;
 }
 
-/** The latest handoff request: in flight until `finishedAt` is set, then
- *  still joinable for `HANDOFF_JOIN_GRACE_MS` when `keep` says so. */
-interface HandoffRequest {
-  /** `handoffKey` — org username plus the sorted test classes. */
-  key: string;
-  /** What the first caller gets, and so what every joiner gets. */
-  result: Promise<RunTestsForResult>;
-  finishedAt?: number;
-  keep?: boolean;
+/** One handoff request, as `TestRunner.handoff` takes it. */
+export interface HandoffRequest {
+  /** The CALLER's target org, which need not be the picker's. */
+  org: OrgInfo;
+  /** The resolved test classes to run. */
+  testClasses: readonly string[];
+  /** The caller's own id for the request, when it sent one. */
+  requestId?: string;
 }
 
 /**
@@ -136,8 +131,9 @@ export class TestRunner implements vscode.Disposable {
   /** The untitled tab each log was opened in, so a second click focuses it
    *  instead of minting another dirty document. */
   private readonly logDocs = new Map<string, vscode.TextDocument>();
-  /** See `handoff`. Replaced by the next request that starts its own run. */
-  private handoffRequest: HandoffRequest | undefined;
+  /** The handoff requests still in progress, by `handoffKey`, each with the
+   *  result its first caller will get — see `handoff`. */
+  private readonly handoffsInFlight = new Map<string, Promise<RunTestsForResult>>();
 
   constructor(private readonly deps: TestRunnerDeps) {}
 
@@ -303,54 +299,44 @@ export class TestRunner implements vscode.Disposable {
    * run and builds the result its caller gets; `busy` is the answer when
    * another run holds the guard.
    *
-   * A repeat of the request in progress — the SAME org and the SAME set of
-   * test classes, e.g. one Run tests click that reached this plugin twice —
-   * joins it rather than being told a run is already going: it waits for
-   * that request and resolves with the very result object the first caller
-   * gets. That holds while the first one is still at its not-deployed or
-   * production question (so no second dialog), while it runs, and for
-   * `HANDOFF_JOIN_GRACE_MS` after it finished (`joinableAfterFinish`), so a
-   * copy landing just late doesn't start the same run again. Any other
-   * request while a run holds the guard stays `busy`.
+   * A repeat of a request still in progress — the SAME org, the SAME set of
+   * test classes and the same caller `requestId` (`handoffKey`), e.g. one
+   * Run tests click that reached this plugin twice — joins it rather than
+   * being told a run is already going: it waits for that request and
+   * resolves with the very result object the first caller gets. That holds
+   * while the first is still at its not-deployed or production question (so
+   * no second dialog) and while it runs. Once it has finished, the same
+   * request is a new one and starts a new run: a retry is meant. Any other
+   * request while a run holds the guard stays `busy`. Requests are kept
+   * per key, so a different one arriving while the first waits at a dialog
+   * doesn't stop a repeat of the first from finding it.
    */
   async handoff(
-    org: OrgInfo,
-    testClasses: readonly string[],
+    request: HandoffRequest,
     run: () => Promise<RunTestsForResult>,
     busy: () => RunTestsForResult,
   ): Promise<RunTestsForResult> {
-    const key = handoffKey(org.username, testClasses);
-    const previous = this.handoffRequest;
-    if (previous?.key === key) {
-      if (previous.finishedAt === undefined) {
-        this.deps.output.appendLine(
-          `SF Tests (from SF Deploy): the same tests on ${org.alias} were asked for again — ` +
-            'joined the run already in progress.',
-        );
-        return previous.result;
-      }
-      if (previous.keep && this.now() - previous.finishedAt < HANDOFF_JOIN_GRACE_MS) {
-        this.deps.output.appendLine(
-          `SF Tests (from SF Deploy): the same tests on ${org.alias} were asked for again — ` +
-            'joined the run that just finished.',
-        );
-        return previous.result;
-      }
+    const key = handoffKey(request.org.username, request.testClasses, request.requestId);
+    const inFlight = this.handoffsInFlight.get(key);
+    if (inFlight) {
+      this.deps.output.appendLine(
+        `SF Tests (from SF Deploy): the same tests on ${request.org.alias} were asked for again — ` +
+          'joined the run already in progress.',
+      );
+      return inFlight;
     }
     if (this.isRunning) return busy();
 
     // In place before `run` takes its first step, so a repeat arriving while
     // this one waits on a dialog or the org already finds it.
-    const request: HandoffRequest = { key, result: Promise.resolve().then(run) };
-    this.handoffRequest = request;
+    const result = Promise.resolve().then(run);
+    this.handoffsInFlight.set(key, result);
     try {
-      const result = await request.result;
-      request.keep = joinableAfterFinish(result);
-      return result;
+      return await result;
     } finally {
-      // Whatever run this started has released the guard by now; this ends
-      // the request's in-flight life, leaving only the grace window.
-      request.finishedAt = this.now();
+      // Whatever run this started has released the guard by now; from here
+      // the same request is a new one.
+      if (this.handoffsInFlight.get(key) === result) this.handoffsInFlight.delete(key);
     }
   }
 
@@ -1149,10 +1135,6 @@ export class TestRunner implements vscode.Disposable {
         `  ${info.className}: ${pct}% covered (${info.numLinesCovered}/${total} lines)`,
       );
     }
-  }
-
-  private now(): number {
-    return this.deps.now ? this.deps.now() : Date.now();
   }
 
   private handleError(err: unknown): void {

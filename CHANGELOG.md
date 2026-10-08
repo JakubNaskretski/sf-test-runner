@@ -4,7 +4,7 @@ All notable changes to the "sf-test-runner" extension are documented here.
 
 ## [0.16.3] - 2026-10-08
 
-- **A repeated Run tests for the same classes joins the run in progress instead of "already running".** When SF Deploy asks for the same tests on the same org again while that run is still going (or within a few seconds after it finished), the second request waits for it and gets the same result, instead of being told a test run is already in progress or running the tests twice. If the first is still asking whether to run, you are asked once. A request for different tests or a different org while a run is going is still told to wait for it to finish, as before.
+- **A repeated Run tests for the same classes joins the run in progress instead of "already running".** When SF Deploy asks again for the same tests on the same org, for the same deploy, while that run is still going, the second request waits for it and gets the same result, instead of being told a test run is already in progress or running the tests twice. If the first is still asking whether to run, you are asked once. Once a run has finished, Run tests starts a new one. A request for different tests, a different org or a newer deploy while a run is going is still told to wait for it to finish, as before.
 
 ## [0.16.2] - 2026-10-08
 

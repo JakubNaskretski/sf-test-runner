@@ -11,7 +11,6 @@ import {
   explainHandoff,
   handoffCapMessage,
   handoffKey,
-  joinableAfterFinish,
   joinNotes,
   MAX_HANDOFF_MESSAGE,
   parseDeployResult,
@@ -672,12 +671,28 @@ test('another org, or another set of test classes, is a different request', () =
   );
 });
 
-test('a finished handoff answers a late repeat unless it was declined or turned away', () => {
-  const base = { testClasses: ['AcmeServiceTest'], passed: 0, failed: 0 };
-  assert.equal(joinableAfterFinish({ ...base, status: 'passed' }), true);
-  assert.equal(joinableAfterFinish({ ...base, status: 'failed' }), true);
-  assert.equal(joinableAfterFinish({ ...base, status: 'error' }), true);
-  assert.equal(joinableAfterFinish({ ...base, status: 'noTests' }), true);
-  assert.equal(joinableAfterFinish({ ...base, status: 'cancelled' }), false);
-  assert.equal(joinableAfterFinish({ ...base, status: 'busy' }), false);
+test('the caller\'s requestId is part of the request: same id same request, another id another', () => {
+  const classes = ['AcmeServiceTest'];
+  const key = handoffKey('dev@acme.example', classes, 'deploy-7');
+  assert.equal(handoffKey('DEV@acme.example', classes, 'deploy-7'), key);
+  assert.notEqual(handoffKey('dev@acme.example', classes, 'deploy-8'), key);
+  assert.notEqual(handoffKey('dev@acme.example', classes), key, 'no id is not any id');
+  assert.equal(handoffKey('dev@acme.example', classes), handoffKey('dev@acme.example', classes));
+});
+
+test('requestId is optional, and when present a short plain id', () => {
+  const base = { classNames: ['AcmeService'], targetOrg: 'alice@example.com' };
+  const plain = parseHandoffArgs(base, KNOWN);
+  assert.equal(plain.ok, true);
+  assert.equal(plain.ok && 'requestId' in plain.value, false);
+
+  for (const requestId of ['0Af000000000001AAA', 'deploy-7_b', 'x'.repeat(64)]) {
+    const result = parseHandoffArgs({ ...base, requestId }, KNOWN);
+    assert.equal(result.ok && result.value.requestId, requestId, requestId);
+  }
+  for (const requestId of ['', 'x'.repeat(65), 'a b', '../x', 'a|b', 7, null, ['a']]) {
+    const result = parseHandoffArgs({ ...base, requestId }, KNOWN);
+    assert.equal(result.ok, false, String(requestId));
+    assert.match(result.ok ? '' : result.message, /requestId/);
+  }
 });

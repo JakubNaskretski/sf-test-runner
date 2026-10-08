@@ -117,7 +117,6 @@ async function until(condition: () => boolean, what: string): Promise<void> {
 function harness(opts: { mode: 'pass' | 'fail'; held?: boolean }) {
   const argvs: string[][] = [];
   const output: string[] = [];
-  const clock = { now: 1_000_000 };
   let release!: () => void;
   const gate = opts.held
     ? new Promise<void>((resolve) => (release = resolve))
@@ -197,14 +196,16 @@ function harness(opts: { mode: 'pass' | 'fail'; held?: boolean }) {
     matchOrg: (org: OrgInfo): void => {
       picked = org;
     },
-    now: () => clock.now,
   });
 
   /** What `sfTestRunner.runTestsFor` does with a resolved request. */
-  function handoff(org: OrgInfo, testClasses: string[]): Promise<RunTestsForResult> {
+  function handoff(
+    org: OrgInfo,
+    testClasses: string[],
+    requestId?: string,
+  ): Promise<RunTestsForResult> {
     return runner.handoff(
-      org,
-      testClasses,
+      { org, testClasses, requestId },
       async () =>
         handoffMod.toRunTestsForResult(await runner.runFor(testClasses, org), testClasses),
       () =>
@@ -219,7 +220,6 @@ function harness(opts: { mode: 'pass' | 'fail'; held?: boolean }) {
     runner,
     handoff,
     output,
-    clock,
     release: (): void => release(),
     /** How many runs reached the org. */
     runStarts: (): number => argvs.filter((a) => a.join(' ').startsWith('apex run test')).length,
@@ -290,32 +290,66 @@ test('the same tests on a different org while a run is in flight is busy', LIMIT
   assert.equal(h.runStarts(), 1);
 });
 
-test('a repeat arriving just after the run finished gets that run’s result', LIMIT, async () => {
+test('asking again after the run finished starts a new run', LIMIT, async () => {
   resetDialogs(async () => undefined);
   const h = harness({ mode: 'fail' });
 
   const first = await h.handoff(DEV, [TEST_CLASS]);
-  assert.equal(first.status, 'error');
   assert.ok(!h.runner.isRunning);
-
-  h.clock.now += handoffMod.HANDOFF_JOIN_GRACE_MS - 1;
-  const repeat = await h.handoff(DEV, [TEST_CLASS]);
-
-  assert.equal(repeat, first);
-  assert.equal(h.runStarts(), 1);
-  assert.ok(h.output.some((l) => l.includes('joined the run that just finished')));
-});
-
-test('a repeat after the grace window starts a new run', LIMIT, async () => {
-  resetDialogs(async () => undefined);
-  const h = harness({ mode: 'fail' });
-
-  const first = await h.handoff(DEV, [TEST_CLASS]);
-  h.clock.now += handoffMod.HANDOFF_JOIN_GRACE_MS;
   const second = await h.handoff(DEV, [TEST_CLASS]);
 
-  assert.notEqual(second, first);
-  assert.equal(h.runStarts(), 2);
+  assert.notEqual(second, first, 'a retry gets its own result');
+  assert.equal(h.runStarts(), 2, 'and its own run');
+  assert.ok(!h.output.some((l) => l.includes('joined')));
+});
+
+test('the same requestId joins the run in progress', LIMIT, async () => {
+  resetDialogs(async () => undefined);
+  const h = harness({ mode: 'fail', held: true });
+
+  const first = h.handoff(DEV, [TEST_CLASS], 'deploy-7');
+  await until(() => h.runStarts() === 1, 'the first run to start');
+  const repeat = h.handoff(DEV, [TEST_CLASS], 'deploy-7');
+  h.release();
+  const [a, b] = await Promise.all([first, repeat]);
+
+  assert.equal(b, a);
+  assert.equal(h.runStarts(), 1);
+});
+
+test('the same tests for a newer requestId while a run is in flight is busy', LIMIT, async () => {
+  resetDialogs(async () => undefined);
+  const h = harness({ mode: 'fail', held: true });
+
+  const first = h.handoff(DEV, [TEST_CLASS], 'deploy-7');
+  await until(() => h.runStarts() === 1, 'the first run to start');
+  const newer = h.handoff(DEV, [TEST_CLASS], 'deploy-8');
+  h.release();
+  const [done, other] = await Promise.all([first, newer]);
+
+  assert.equal(other.status, 'busy');
+  assert.notEqual(other, done);
+  assert.equal(h.runStarts(), 1);
+});
+
+test('two different requests waiting at their dialogs can each be joined', LIMIT, async () => {
+  const answers: ((pick: string | undefined) => void)[] = [];
+  resetDialogs(() => new Promise((resolve) => answers.push(resolve)));
+  const h = harness({ mode: 'fail' });
+
+  const a = h.handoff(PROD, [TEST_CLASS]);
+  await until(() => warnings.length === 1, 'the first production question');
+  const b = h.handoff(PROD, ['AcmeOtherTest']);
+  await until(() => warnings.length === 2, 'the second production question');
+  const aAgain = h.handoff(PROD, [TEST_CLASS]);
+  const bAgain = h.handoff(PROD, ['AcmeOtherTest']);
+  for (const answer of answers) answer('Run Tests');
+  const [ra, rb, ra2, rb2] = await Promise.all([a, b, aAgain, bAgain]);
+
+  assert.equal(ra2, ra, 'the first request was not pushed out by the second');
+  assert.equal(rb2, rb);
+  const questions = warnings.filter((w) => w.includes('PRODUCTION'));
+  assert.equal(questions.length, 2, 'one question per request, none per repeat');
 });
 
 test('a repeat while the first still waits on the production question joins it — one question', LIMIT, async () => {
@@ -334,13 +368,12 @@ test('a repeat while the first still waits on the production question joins it �
   assert.equal(h.runStarts(), 1);
 });
 
-test('a declined request is asked again by the next one, even inside the grace window', LIMIT, async () => {
+test('a declined request is asked again by the next one', LIMIT, async () => {
   resetDialogs(async () => undefined); // dismiss the production question
   const h = harness({ mode: 'fail' });
 
   const declined = await h.handoff(PROD, [TEST_CLASS]);
   assert.equal(declined.status, 'cancelled');
-  h.clock.now += 1000;
   const again = await h.handoff(PROD, [TEST_CLASS]);
 
   assert.notEqual(again, declined);

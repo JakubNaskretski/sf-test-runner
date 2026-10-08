@@ -377,14 +377,15 @@ export function activate(context: vscode.ExtensionContext): void {
    * of it reaches a CLI selector or an org lookup; the known-org check runs
    * separately here (rather than via `parseHandoffArgs`) so a miss can
    * refresh the list once and retry before it is reported as unknown. The
-   * same request arriving twice gets one run and one shared result.
+   * same request arriving again while it is still in progress gets the same
+   * run and the same result.
    */
   async function runTestsFor(raw: unknown): Promise<RunTestsForResult> {
     const shape = parseHandoffShape(raw);
     if (!shape.ok) {
       return { status: 'error', testClasses: [], passed: 0, failed: 0, message: shape.message };
     }
-    const { classNames, targetOrg, deployed } = shape.value;
+    const { classNames, targetOrg, deployed, requestId } = shape.value;
 
     const resolved = await resolveHandoffOrg(targetOrg);
     if ('error' in resolved) {
@@ -417,8 +418,7 @@ export function activate(context: vscode.ExtensionContext): void {
         resolution,
       );
     return runner.handoff(
-      org,
-      testClasses,
+      { org, testClasses, requestId },
       async () => {
         testsView.reveal();
         resultsView.reveal();
