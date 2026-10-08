@@ -111,10 +111,21 @@ export interface TestClassEntry {
   /** True when the org listed the class but its methods were never classified.
    *  Such a class can only be selected whole (selection key is the bare name). */
   methodsUnknown?: boolean;
+  /** The class declaration carries `@IsTest` but no method in it was
+   *  recognised as a test (`methods` is empty). Kept out of the visible
+   *  `classes` by `buildIndex` — see `TestIndexSnapshot.annotatedOnly`. */
+  annotatedOnly?: boolean;
 }
 
 export interface TestIndexSnapshot {
+  /** The test classes the panel lists, selects and counts. */
   classes: TestClassEntry[];
+  /** Classes declared `@IsTest` with no recognised test method — helpers like
+   *  a TestDataFactory, or a test class whose methods the heuristic misses.
+   *  Hidden from the Tests view, the selection and the CodeLens; only the
+   *  cross-extension handoff reads them, to run a deployed class of this kind
+   *  by its own name. Absent when there are none. */
+  annotatedOnly?: TestClassEntry[];
   /** Org the org-side half of the index came from, and when it was fetched. */
   orgUsername?: string;
   orgFetchedAt?: number;

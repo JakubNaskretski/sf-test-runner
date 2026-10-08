@@ -227,6 +227,19 @@ test('localOnlyClasses claims nothing while the org half of the index is unknown
   assert.deepEqual(localOnlyClasses(index, SELECTORS, undefined), []);
 });
 
+test('localOnlyClasses also sees the hidden annotated-only classes a handoff can send', () => {
+  const withHelpers: TestIndexSnapshot = {
+    ...index,
+    annotatedOnly: [
+      { name: 'AcmeLocalHelper', source: 'local-only', methods: [], annotatedOnly: true },
+      { name: 'AcmeDeployedHelper', source: 'both', methods: [], annotatedOnly: true },
+    ],
+  };
+  assert.deepEqual(localOnlyClasses(withHelpers, ['AcmeLocalHelper', 'AcmeDeployedHelper'], ORG), [
+    'AcmeLocalHelper',
+  ]);
+});
+
 test('dropClasses removes every selector of the named classes', () => {
   assert.deepEqual(
     dropClasses(

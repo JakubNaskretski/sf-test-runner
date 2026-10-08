@@ -10,6 +10,10 @@ export interface TestClassInfo {
   className: string;
   /** Zero-based line of the class declaration. */
   classLine: number;
+  /** The declaration itself carries `@IsTest` (with or without attributes,
+   *  on its own line or the same one) — the class-level flag, independent of
+   *  whether any method inside is recognised as a test. */
+  isTestAnnotated: boolean;
 }
 
 export interface TestMethodInfo {
@@ -36,6 +40,12 @@ const TEST_METHOD_KEYWORD_RE = /\btestMethod\b/i;
 // stripped before signature matching so `@IsTest(SeeAllData=true)` can't be
 // mistaken for a method named "IsTest" (its paren list matches METHOD_SIG_RE).
 const LEADING_ANNOTATIONS_RE = /^\s*(?:@\s*\w+\s*(?:\([^)]*\))?\s*)+/;
+
+// The run of annotations that ends right where the class declaration starts:
+// `@IsTest\n`, `@IsTest ` on the same line, `@isTest(SeeAllData=true)\n`, or
+// several stacked ones. `[^)]*` spans newlines, so a wrapped attribute list
+// still counts.
+const TRAILING_ANNOTATIONS_RE = /(?:@\s*\w+(?:\s*\([^)]*\))?\s*)+$/;
 
 /**
  * Whether a source file contains any Apex tests (class-level or method-level
@@ -114,12 +124,40 @@ export function stripComments(text: string): string {
  * returned `classLine` still indexes the `lines` the caller passed in.
  */
 export function findClassDecl(lines: string[]): TestClassInfo | null {
-  const scrubbed = stripComments(lines.join('\n')).split('\n');
+  // Strings blanked too: a `)` inside `@SuppressWarnings('a)b')` would end the
+  // annotation's argument list early and hide the `@IsTest` above it.
+  const scrubbed = stripCommentsAndStrings(lines.join('\n')).split('\n');
   for (let i = 0; i < scrubbed.length; i++) {
-    const m = scrubbed[i].match(CLASS_DECL_RE);
-    if (m) return { className: m[1], classLine: i };
+    const m = CLASS_DECL_RE.exec(scrubbed[i]);
+    if (m) {
+      // Everything before the declaration's first modifier: the annotations
+      // that apply to the class are the ones at the very end of it.
+      const before = [...scrubbed.slice(0, i), scrubbed[i].slice(0, m.index)].join('\n');
+      const block = TRAILING_ANNOTATIONS_RE.exec(before);
+      return {
+        className: m[1],
+        classLine: i,
+        isTestAnnotated: block !== null && IS_TEST_ANNOTATION_RE.test(block[0]),
+      };
+    }
   }
   return null;
+}
+
+/**
+ * Blank out the CONTENT of single-quoted Apex string literals (quotes kept,
+ * every other character a space), so `System.debug('@isTest')` cannot read as
+ * an annotation. Run after `stripComments`; line structure and every index
+ * are preserved, like there.
+ */
+function blankStrings(text: string): string {
+  return text.replace(/'(?:\\.|[^'\\\r\n])*'/g, (lit) => `'${' '.repeat(lit.length - 2)}'`);
+}
+
+/** Apex source with comments and string-literal contents blanked — what is
+ *  left is code. Line structure and indices preserved. */
+function stripCommentsAndStrings(text: string): string {
+  return blankStrings(stripComments(text));
 }
 
 /**
@@ -133,17 +171,20 @@ export function findClassDecl(lines: string[]): TestClassInfo | null {
  * signature as valid too. Constructors and the class declaration are skipped.
  */
 export function findTestMethods(lines: string[], className?: string): TestMethodInfo[] {
+  // Comments and string literals blanked, lines kept: a commented-out
+  // `// @IsTest` or a `'@isTest'` in a debug line is not an annotation.
+  const code = stripCommentsAndStrings(lines.join('\n')).split('\n');
   const methods: TestMethodInfo[] = [];
   const seen = new Set<number>();
-  for (let i = 0; i < lines.length; i++) {
-    const line = lines[i];
+  for (let i = 0; i < code.length; i++) {
+    const line = code[i];
 
     // Skip the class declaration line itself.
     if (CLASS_DECL_RE.test(line)) continue;
 
     const annotatedInline = IS_TEST_ANNOTATION_RE.test(line);
     const testMethodKeyword = TEST_METHOD_KEYWORD_RE.test(line);
-    const annotatedAbove = !annotatedInline && hasAnnotationAbove(lines, i);
+    const annotatedAbove = !annotatedInline && hasAnnotationAbove(code, i);
 
     if (!annotatedInline && !annotatedAbove && !testMethodKeyword) continue;
 
@@ -160,17 +201,30 @@ export function findTestMethods(lines: string[], className?: string): TestMethod
   return methods;
 }
 
-/** Look back over the preceding non-blank/comment lines for an `@isTest`. */
+// What may follow the annotations on a line that still only OPENS a method
+// declaration: modifiers, nothing else — no name, no `(`, no brace.
+const MODIFIERS_ONLY_RE =
+  /^(?:(?:public|private|protected|global|static|override|final|virtual|abstract|testMethod|webservice)\s*)*$/i;
+
+/**
+ * Look back over the preceding lines for an `@isTest` that belongs to THIS
+ * declaration. `lines` are already comment-stripped, so comments are blank.
+ * A line counts when it is annotations followed by nothing but modifiers —
+ * `@IsTest`, `@isTest static` (the signature continues below). A line that
+ * carries its own declaration — `@IsTest public class Helper {`,
+ * `@IsTest static void a() {}` — owns its annotation, so it ends the look-back
+ * instead of lending it to the method below.
+ */
 function hasAnnotationAbove(lines: string[], index: number): boolean {
   for (let j = index - 1; j >= 0 && j >= index - 4; j--) {
     const prev = lines[j].trim();
     if (prev === '') continue;
-    if (IS_TEST_ANNOTATION_RE.test(prev)) return true;
-    // Stop at anything that clearly isn't an annotation/comment (a real
-    // statement or another declaration ends the annotation block).
-    if (!prev.startsWith('@') && !prev.startsWith('//') && !prev.startsWith('*') && !prev.startsWith('/*')) {
+    // Anything that is not annotations-then-modifiers (a statement, another
+    // declaration, a brace) ends the annotation block.
+    if (!prev.startsWith('@') || !MODIFIERS_ONLY_RE.test(prev.replace(LEADING_ANNOTATIONS_RE, '').trim())) {
       return false;
     }
+    if (IS_TEST_ANNOTATION_RE.test(prev)) return true;
   }
   return false;
 }

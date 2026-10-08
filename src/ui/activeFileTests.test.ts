@@ -1,7 +1,13 @@
 import { strict as assert } from 'node:assert';
 import { test } from 'node:test';
 import type { TestIndexSnapshot } from '../types';
-import { classNameOf, keysForClasses, resolveTestClasses, testKeysForActiveFile } from './activeFileTests';
+import {
+  classNameOf,
+  keysForClasses,
+  resolveHandoff,
+  resolveTestClasses,
+  testKeysForActiveFile,
+} from './activeFileTests';
 
 const index: TestIndexSnapshot = {
   classes: [
@@ -127,6 +133,102 @@ test('resolveTestClasses: blank names, an empty input and an empty index are all
   assert.deepEqual(resolveTestClasses(index, ['', '   ']), []);
   assert.deepEqual(resolveTestClasses(index, []), []);
   assert.deepEqual(resolveTestClasses({ classes: [] }, ['AccountService']), []);
+});
+
+// ──────────────────── resolveHandoff: the flag, then the semantics ────────────────────
+
+const handoffIndex: TestIndexSnapshot = {
+  classes: [
+    { name: 'AcmeOrderTest', source: 'both', methods: [{ name: 'testTotals' }] },
+    { name: 'AcmeBillingTest', source: 'both', methods: [{ name: 'testInvoice' }] },
+  ],
+  annotatedOnly: [
+    { name: 'AcmeHelper', source: 'both', methods: [], annotatedOnly: true },
+    { name: 'AcmeTestDataFactory', source: 'both', methods: [], annotatedOnly: true },
+  ],
+};
+
+test('resolveHandoff: a deployed @IsTest class with no recognised method runs as its own test', () => {
+  const res = resolveHandoff(handoffIndex, ['AcmeHelper']);
+  assert.deepEqual(res.testClasses, ['AcmeHelper']);
+  assert.deepEqual(res.matches, [{ name: 'AcmeHelper', own: 'annotated', testClasses: ['AcmeHelper'] }]);
+  // Case-insensitive, like every other lookup here; the index spelling is sent.
+  assert.deepEqual(resolveTestClasses(handoffIndex, ['acmehelper']), ['AcmeHelper']);
+});
+
+test('resolveHandoff: flag first is not flag only — an annotated class also brings its testFor tests', () => {
+  const idx: TestIndexSnapshot = {
+    ...handoffIndex,
+    classes: [
+      ...handoffIndex.classes,
+      { name: 'AcmeHelperTest', source: 'both', methods: [{ name: 't' }] },
+      { name: 'AcmeDeclares', source: 'both', methods: [{ name: 't' }], testFor: ['AcmeHelper'] },
+    ],
+  };
+  const res = resolveHandoff(idx, ['AcmeHelper']);
+  // Itself first, then the testFor test; testFor wins over the naming convention as before.
+  assert.deepEqual(res.testClasses, ['AcmeHelper', 'AcmeDeclares']);
+  assert.deepEqual(res.matches, [
+    { name: 'AcmeHelper', own: 'annotated', semantic: 'testFor', testClasses: ['AcmeHelper', 'AcmeDeclares'] },
+  ]);
+});
+
+test('resolveHandoff: an annotated class with no testFor test still brings its naming-convention test', () => {
+  const idx: TestIndexSnapshot = {
+    ...handoffIndex,
+    classes: [...handoffIndex.classes, { name: 'AcmeHelperTest', source: 'both', methods: [{ name: 't' }] }],
+  };
+  assert.deepEqual(resolveTestClasses(idx, ['AcmeHelper']), ['AcmeHelper', 'AcmeHelperTest']);
+});
+
+test('resolveHandoff: a deployed test class is "own", and testFor / naming keep their order for the rest', () => {
+  const idx: TestIndexSnapshot = {
+    classes: [
+      { name: 'AcmeOrderTest', source: 'both', methods: [{ name: 't' }] },
+      { name: 'AcmeDeclaresOrder', source: 'both', methods: [{ name: 't' }], testFor: ['AcmeOrder'] },
+      { name: 'AcmeLedgerTest', source: 'both', methods: [{ name: 't' }] },
+    ],
+  };
+  const res = resolveHandoff(idx, ['AcmeOrderTest', 'AcmeOrder', 'AcmeLedger']);
+  assert.deepEqual(res.matches, [
+    { name: 'AcmeOrderTest', own: 'own', testClasses: ['AcmeOrderTest'] },
+    { name: 'AcmeOrder', semantic: 'testFor', testClasses: ['AcmeDeclaresOrder'] },
+    { name: 'AcmeLedger', semantic: 'naming', testClasses: ['AcmeLedgerTest'] },
+  ]);
+});
+
+test('resolveHandoff: a deployed test class that another test declares testFor brings that one too', () => {
+  const idx: TestIndexSnapshot = {
+    classes: [
+      { name: 'AcmeOrderTest', source: 'both', methods: [{ name: 't' }] },
+      { name: 'AcmeOrderTestAudit', source: 'both', methods: [{ name: 't' }], testFor: ['AcmeOrderTest'] },
+    ],
+  };
+  assert.deepEqual(resolveTestClasses(idx, ['AcmeOrderTest']), ['AcmeOrderTest', 'AcmeOrderTestAudit']);
+});
+
+test('resolveHandoff: an unmatched class contributes nothing and says so', () => {
+  const res = resolveHandoff(handoffIndex, ['AcmeUtil']);
+  assert.deepEqual(res.testClasses, []);
+  assert.deepEqual(res.matches, [{ name: 'AcmeUtil', testClasses: [] }]);
+});
+
+test('resolveHandoff: one batch mixes every rule and dedupes across them', () => {
+  const idx: TestIndexSnapshot = {
+    ...handoffIndex,
+    classes: [...handoffIndex.classes, { name: 'AcmeHelperTest', source: 'both', methods: [{ name: 't' }] }],
+  };
+  const res = resolveHandoff(idx, ['AcmeHelper', 'AcmeHelperTest', 'AcmeOrder', 'AcmeNothing']);
+  assert.deepEqual(res.testClasses, ['AcmeHelper', 'AcmeHelperTest', 'AcmeOrderTest']);
+  assert.deepEqual(
+    res.matches.map((m) => [m.own ?? '-', m.semantic ?? '-']),
+    [
+      ['annotated', 'naming'],
+      ['own', '-'],
+      ['-', 'naming'],
+      ['-', '-'],
+    ],
+  );
 });
 
 // ───────────────────────────── keysForClasses ──────────────────────────────

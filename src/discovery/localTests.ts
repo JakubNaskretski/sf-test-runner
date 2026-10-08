@@ -186,12 +186,14 @@ export class LocalTestScanner implements vscode.Disposable {
     const lines = text.split(/\r?\n/);
     const cls = findClassDecl(lines);
     const methods = cls ? findTestMethods(lines, cls.className) : [];
-    // `@IsTest` alone is not a test class: every SFDX repo has annotated helpers
-    // (TestDataFactory, HttpCalloutMock implementations) with no test methods in
-    // them, and offering a run button that can only fail is worse than not
-    // listing them. The cost is that a test class whose methods the heuristic
-    // misses entirely stays out of the list.
-    if (!cls || methods.length === 0) return this.forgetFile(uri);
+    // A class-level `@IsTest` with no method the heuristic recognises is still
+    // kept, flagged `annotatedOnly`: the flag is the class's own word that it
+    // is a test class, and the cross-extension handoff runs such a class by
+    // name when it is the one deployed (the org decides what in it is a test).
+    // `buildIndex` keeps these OUT of the visible list — every SFDX repo has
+    // annotated helpers (TestDataFactory, HttpCalloutMock implementations) and
+    // a run row that can only report "no tests" is clutter there.
+    if (!cls || (methods.length === 0 && !cls.isTestAnnotated)) return this.forgetFile(uri);
 
     const key = uri.toString();
     const previousId = this.classIdByUri.get(key);
@@ -212,6 +214,7 @@ export class LocalTestScanner implements vscode.Disposable {
       classLine: cls.classLine,
       methods: methods.map((m) => ({ name: m.methodName, line: m.line })),
     };
+    if (methods.length === 0) entry.annotatedOnly = true;
     const testFor = findTestForTargets(lines);
     if (testFor.length > 0) entry.testFor = testFor;
     const previous = this.classes.get(cls.className);
@@ -278,6 +281,7 @@ function sameEntry(a: TestClassEntry, b: TestClassEntry): boolean {
     a.name === b.name &&
     a.uri === b.uri &&
     a.classLine === b.classLine &&
+    Boolean(a.annotatedOnly) === Boolean(b.annotatedOnly) &&
     // Editing only the annotation moves no line, so without this the change
     // never reaches the index and the Coverage view keeps the stale targets.
     (a.testFor ?? []).join() === (b.testFor ?? []).join() &&

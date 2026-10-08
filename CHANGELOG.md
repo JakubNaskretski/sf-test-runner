@@ -2,6 +2,12 @@
 
 All notable changes to the "sf-test-runner" extension are documented here.
 
+## [0.16.2] - 2026-10-08
+
+- **A deployed class annotated `@isTest` runs as its own test.** When SF Deploy hands over a class whose declaration carries `@isTest` (`@isTest`, `@IsTest(SeeAllData=true)`, on its own line or the same one) but none of whose methods this extension recognises as tests, it is no longer reported as "no matching test class" — it runs by its own name and the org decides what in it is a test, alongside the tests found for it as before (`@IsTest(testFor=…)`, else `HelperTest`/`TestHelper`/`Helper_Test`/`HelperTests`). If the org finds no test method in it, the result says so plainly: "Helper: @isTest, but the org found no test methods in it". Such classes still stay out of the Tests view and get no CodeLens, so data factories and callout mocks don't clutter it.
+- **The "no matching test" result now says what was checked**, per class: whether it is a test class, `testFor`, and the four names tried — with the org still named in front.
+- Test methods are found more reliably: a commented-out `// @IsTest`, an `'@isTest'` inside a string, or a one-line `@IsTest public class …` / `@IsTest static void a() {}` no longer turns the method below it into a test.
+
 ## [0.16.1] - 2026-10-04
 
 - **Tests run where you deployed.** After SF Deploy Wrapper deploys Apex, this extension switches to that org, so running tests from here right after — Run, or the Run Test link in the editor — goes to the same org instead of whatever was picked before. A run started from SF Deploy does the same, and only once it really starts: declining a production run leaves your org and selection as they were.

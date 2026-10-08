@@ -43,9 +43,10 @@ export class ApexTestCodeLensProvider implements vscode.CodeLensProvider, vscode
     const cls = findClassDecl(lines);
     if (!cls) return [];
     const methods = findTestMethods(lines, cls.className);
-    // `@IsTest` alone is not a test class: every SFDX repo has annotated helpers
-    // (TestDataFactory, HttpCalloutMock implementations) with no test methods,
-    // and a run button on one can only fail.
+    // An `@IsTest` class with no recognised test method gets no lenses: every
+    // SFDX repo has annotated helpers (TestDataFactory, HttpCalloutMock
+    // implementations), and a run button on one can only report "no tests".
+    // (A deployed one handed over by SF Deploy still runs — see resolveHandoff.)
     if (methods.length === 0) return [];
 
     const outcomes = this.state.outcomes();

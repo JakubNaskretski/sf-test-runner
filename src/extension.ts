@@ -17,6 +17,7 @@ import { LocalTestScanner } from './discovery/localTests';
 import { OrgTestFetcher } from './discovery/orgTests';
 import { buildIndex } from './discovery/testIndex';
 import {
+  explainHandoff,
   FollowOrgResult,
   parseHandoffShape,
   parseTargetOrgShape,
@@ -28,7 +29,7 @@ import { sameOrg } from './orgMatch';
 import { TestRunner } from './runs/testRunner';
 import { SfCliService } from './salesforce/sfCliService';
 import { CommandLogEntry, OrgInfo, TestClassEntry } from './types';
-import { classNameOf, resolveTestClasses, testKeysForActiveFile } from './ui/activeFileTests';
+import { classNameOf, resolveHandoff, testKeysForActiveFile } from './ui/activeFileTests';
 import { ApexTestCodeLensProvider, RunLensArgs } from './ui/codeLens';
 import { CommandHistoryProvider, copyCommandToClipboard } from './ui/commandHistoryProvider';
 import { CoverageDecorator, classNameFromUri } from './ui/coverageDecorator';
@@ -391,22 +392,42 @@ export function activate(context: vscode.ExtensionContext): void {
     const { org } = resolved;
 
     await ensureScanned();
-    const testClasses = resolveTestClasses(state.index, classNames);
+    // The flag (the class is itself a test class, or declared @IsTest), and
+    // the semantics (testFor, else the naming conventions) — both, unioned.
+    const resolution = resolveHandoff(state.index, classNames);
+    const { testClasses } = resolution;
     if (testClasses.length === 0) {
       // No toast here: this is the handoff path, and the caller shows its own
-      // card for `noTests` — TR's own entry points (Select Tests for Active
-      // Class) keep theirs.
-      return { status: 'noTests', testClasses: [], passed: 0, failed: 0 };
+      // card for `noTests` — with this message, which says what was checked.
+      // TR's own entry points (Select Tests for Active Class) keep theirs.
+      const result = explainHandoff(
+        { status: 'noTests', orgAlias: org.alias, testClasses: [], passed: 0, failed: 0 },
+        resolution,
+      );
+      output.appendLine(`SF Tests (from SF Deploy): ${result.message}`);
+      return result;
     }
 
     if (runner.isRunning) {
-      return toRunTestsForResult({ record: undefined, ranSelectors: [], busy: true }, testClasses);
+      return explainHandoff(
+        toRunTestsForResult({ record: undefined, ranSelectors: [], busy: true }, testClasses),
+        resolution,
+      );
     }
 
     testsView.reveal();
     resultsView.reveal();
     const outcome = await runner.runFor(testClasses, org, deployed ? { deployed: classNames } : undefined);
-    return toRunTestsForResult(outcome, testClasses);
+    const result = explainHandoff(toRunTestsForResult(outcome, testClasses), resolution, outcome.record);
+    if (result.message && result.message !== outcome.record?.error) {
+      output.appendLine(`SF Tests (from SF Deploy): ${result.message}`);
+    }
+    // An @IsTest class the org found empty is "no tests", not the generic
+    // "this run reported no test results" — say it in the Results view too.
+    if (result.status === 'noTests' && outcome.record && state.run?.id === outcome.record.id) {
+      state.updateRun({ error: result.message });
+    }
+    return result;
   }
 
   /**

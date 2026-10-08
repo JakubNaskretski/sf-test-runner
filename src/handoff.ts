@@ -13,6 +13,7 @@
 import { sameOrg } from './orgMatch';
 import { orgMovedDuringDeploy } from './runs/runLabel';
 import type { RunRecord } from './types';
+import { conventionNames, type HandoffResolution } from './ui/activeFileTests';
 
 const CLASS_NAME = /^\w+$/;
 const MAX_CLASS_NAMES = 200;
@@ -298,4 +299,113 @@ export function toRunTestsForResult(
     failed: record.summary?.failing ?? 0,
     message: record.error,
   };
+}
+
+/** Longest `message` a handoff result composes. The deploy panel shows it
+ *  verbatim as a Status card title and cuts at 500 itself; stopping short of
+ *  that here means a long list ends on "… and N more", not mid-word. */
+export const MAX_HANDOFF_MESSAGE = 480;
+
+/** What was checked for a deployed class nothing matched, in checking order. */
+export function unmatchedNote(name: string): string {
+  return (
+    `${name}: not a test class; no @IsTest(testFor) names it; ` +
+    `no test class named ${conventionNames(name).join('/')}`
+  );
+}
+
+/** The plain reading of an `@IsTest` class the org ran and found empty. */
+export function emptyAnnotatedNote(testClass: string): string {
+  return `${testClass}: @isTest, but the org found no test methods in it`;
+}
+
+/**
+ * The annotated-only classes (`own: 'annotated'`) that were sent to the org
+ * and came back with no result row at all — the org found no test method in
+ * them. Only claimed for a run that finished with a summary: a cancelled,
+ * refused or still-running one says nothing about what the class holds.
+ */
+export function emptyAnnotatedClasses(
+  resolution: HandoffResolution,
+  ranClasses: readonly string[],
+  record: RunRecord | undefined,
+): string[] {
+  const summary = record?.summary;
+  if (!summary || record?.status === 'cancelled') return [];
+  const ran = new Set(ranClasses.map((name) => name.toLowerCase()));
+  const reported = new Set(summary.results.map((r) => r.className.toLowerCase()));
+  return resolution.matches
+    .filter((m) => m.own === 'annotated')
+    .map((m) => m.testClasses[0])
+    .filter((name) => ran.has(name.toLowerCase()) && !reported.has(name.toLowerCase()));
+}
+
+/** Join sentences with ". " (or a space after one that already ends in a
+ *  stop). Over `max`, keep the most leading notes that fit and say how many
+ *  were left out ("… and N more") rather than cut one mid-word. */
+export function joinNotes(parts: readonly string[], max = MAX_HANDOFF_MESSAGE): string {
+  const join = (list: readonly string[]): string =>
+    list.reduce((acc, part) => (acc ? `${acc}${/[.!?]$/.test(acc) ? ' ' : '. '}${part}` : part), '');
+  const full = join(parts);
+  if (full.length <= max) return full;
+  for (let keep = parts.length - 1; keep >= 1; keep--) {
+    const text = `${join(parts.slice(0, keep))} … and ${parts.length - keep} more`;
+    if (text.length <= max) return text;
+  }
+  return `${full.slice(0, max - 1)}…`;
+}
+
+/** The lead sentence of a `noTests` message. The deploy panel shows the
+ *  message in place of its own "Tests on <org>: …" title, so the org stays in
+ *  front when it is known. */
+function noTestsLead(orgAlias: string | undefined, what: string): string {
+  return orgAlias ? `Tests on ${orgAlias}: ${what}` : what.charAt(0).toUpperCase() + what.slice(1);
+}
+
+/**
+ * Fold what the matching learned — and, once a run finished, what the org
+ * reported — into a `runTestsFor` result's `message`:
+ *  - nothing matched at all (`noTests`, no run): "Tests on <org>: no matching
+ *    test class", then, per class, exactly what was checked;
+ *  - every class that ran was an `@IsTest` class the org found no test
+ *    method in, and the run reported nothing (the org answers such a class
+ *    with outcome Skipped, 0 ran — not an error): that is `noTests` too, and
+ *    the message says so in plain words;
+ *  - a run that was cancelled keeps its own wording — notes about what a
+ *    run that never happened would have matched would replace it;
+ *  - otherwise the status stands, and the notes (empty annotated classes,
+ *    unmatched classes) follow whatever message the run itself produced.
+ */
+export function explainHandoff(
+  result: RunTestsForResult,
+  resolution: HandoffResolution,
+  record?: RunRecord,
+): RunTestsForResult {
+  const empty = emptyAnnotatedClasses(resolution, result.testClasses, record);
+  const unmatched = resolution.matches
+    .filter((m) => m.testClasses.length === 0)
+    .map((m) => unmatchedNote(m.name));
+  const notes = [...empty.map(emptyAnnotatedNote), ...unmatched];
+  if (result.status === 'noTests' && result.testClasses.length === 0) {
+    return {
+      ...result,
+      message: joinNotes([noTestsLead(result.orgAlias, 'no matching test class'), ...notes]),
+    };
+  }
+  if (notes.length === 0 || result.status === 'cancelled') return result;
+
+  const emptyKeys = new Set(empty.map((name) => name.toLowerCase()));
+  const onlyEmpty =
+    record?.summary?.results.length === 0 &&
+    result.testClasses.length > 0 &&
+    result.testClasses.every((name) => emptyKeys.has(name.toLowerCase()));
+  if (onlyEmpty) {
+    return {
+      ...result,
+      status: 'noTests',
+      message: joinNotes([noTestsLead(result.orgAlias, 'no test methods ran'), ...notes]),
+    };
+  }
+
+  return { ...result, message: joinNotes(result.message ? [result.message, ...notes] : notes) };
 }
