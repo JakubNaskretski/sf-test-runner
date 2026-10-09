@@ -233,6 +233,7 @@ export function activate(context: vscode.ExtensionContext): void {
       void resolver.open(className, { method, line, isTrigger }),
     rerunFailed: () => void runner.rerunFailed(),
     copySummary: () => void runner.copySummary(),
+    copyFailure: (className, methodName) => void runner.copyFailure(className, methodName),
     showLog: (className, methodName) => void runner.showLog(className, methodName),
     loadRecent: () => void runner.loadRecent(),
   };

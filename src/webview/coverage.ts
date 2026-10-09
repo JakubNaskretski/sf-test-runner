@@ -228,6 +228,8 @@ function rowEl(row: CoverageRow): HTMLElement {
       });
     node.addEventListener('click', open);
     node.addEventListener('keydown', (event) => {
+      // A key on the row's ☁ button is that button's, not the row's.
+      if (event.target !== node) return;
       if (event.key !== 'Enter' && event.key !== ' ') return;
       event.preventDefault();
       open();

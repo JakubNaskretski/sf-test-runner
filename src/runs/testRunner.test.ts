@@ -12,6 +12,10 @@ import type { OrgInfo } from '../types';
 /** Every warning dialog shown, with the answer the test wants for it. */
 let warnings: string[] = [];
 let answerWarning: (message: string) => Promise<string | undefined> = async () => undefined;
+/** What the runner wrote to the clipboard, and the status-bar notes it left. */
+const clipboard: string[] = [];
+const statusNotes: string[] = [];
+const infos: string[] = [];
 
 const realLoad = (Module as any)._load;
 (Module as any)._load = function (request: string, ...rest: any[]): unknown {
@@ -45,8 +49,22 @@ const realLoad = (Module as any)._load;
         warnings.push(message);
         return answerWarning(message);
       },
-      showInformationMessage: async (): Promise<undefined> => undefined,
+      showInformationMessage: async (message: string): Promise<undefined> => {
+        infos.push(message);
+        return undefined;
+      },
       showErrorMessage: async (): Promise<undefined> => undefined,
+      setStatusBarMessage: (message: string): { dispose: () => void } => {
+        statusNotes.push(message);
+        return { dispose: (): void => {} };
+      },
+    },
+    env: {
+      clipboard: {
+        writeText: async (text: string): Promise<void> => {
+          clipboard.push(text);
+        },
+      },
     },
     extensions: { getExtension: () => undefined },
   };
@@ -379,4 +397,37 @@ test('a declined request is asked again by the next one', LIMIT, async () => {
   assert.notEqual(again, declined);
   assert.equal(warnings.length, 2, 'the second request gets its own question');
   assert.equal(h.runStarts(), 0);
+});
+
+test('copyFailure copies that one failure, and nothing for a pass or an unknown method', async () => {
+  const results = [
+    { className: TEST_CLASS, methodName: 'itWorks', outcome: 'Pass', runTime: 5, message: null, stackTrace: null },
+    {
+      className: TEST_CLASS,
+      methodName: 'itBreaks',
+      outcome: 'Fail',
+      runTime: 7,
+      message: 'System.AssertException: Assertion Failed',
+      stackTrace: `Class.${TEST_CLASS}.itBreaks: line 12, column 1`,
+    },
+    { className: TEST_CLASS, methodName: 'itAlsoBreaks', outcome: 'Fail', runTime: 3, message: 'other', stackTrace: null },
+  ];
+  const state = { run: { summary: { results } } };
+  const runner = new runnerMod.TestRunner({ state } as any);
+  clipboard.length = 0;
+  statusNotes.length = 0;
+  infos.length = 0;
+
+  await runner.copyFailure(TEST_CLASS, 'itBreaks');
+  assert.deepEqual(clipboard, [
+    `✗ ${TEST_CLASS}.itBreaks — System.AssertException: Assertion Failed\n` +
+      `    Class.${TEST_CLASS}.itBreaks: line 12, column 1`,
+  ]);
+  assert.deepEqual(statusNotes, [`$(check) Copied ${TEST_CLASS}.itBreaks`]);
+
+  await runner.copyFailure(TEST_CLASS, 'itWorks');
+  await runner.copyFailure(TEST_CLASS, 'noSuchMethod');
+  await runner.copyFailure('OtherTest', 'itBreaks');
+  assert.equal(clipboard.length, 1);
+  assert.equal(infos.length, 3, 'each miss says so instead of a silent no-op');
 });

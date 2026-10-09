@@ -122,6 +122,7 @@ export type ResultsViewMessage =
   | { type: 'results:setFilter'; filter: ResultsFilter }
   | { type: 'results:rerunFailed' }
   | { type: 'results:copySummary' }
+  | { type: 'results:copyFailure'; className: string; methodName: string }
   | { type: 'results:showLog'; className: string; methodName: string }
   | { type: 'results:loadRecent' }
   | { type: 'results:ready' };
@@ -216,6 +217,7 @@ export const RESULTS_MESSAGE_SHAPES: Record<ResultsViewMessage['type'], MessageS
   'results:setFilter': { type: 'string', filter: 'string' },
   'results:rerunFailed': { type: 'string' },
   'results:copySummary': { type: 'string' },
+  'results:copyFailure': { type: 'string', className: 'string', methodName: 'string' },
   'results:showLog': { type: 'string', className: 'string', methodName: 'string' },
   'results:loadRecent': { type: 'string' },
   'results:ready': { type: 'string' },

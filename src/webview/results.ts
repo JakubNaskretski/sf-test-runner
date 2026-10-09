@@ -426,6 +426,24 @@ function methodRow(group: ClassGroup, result: TestMethodResult): HTMLElement {
     });
     children.push(log);
   }
+  // Same predicate as the host's `failedResults`, and only once the summary is in:
+  // a live row has no message to copy.
+  if (current.run?.summary && (result.outcome === 'Fail' || result.outcome === 'CompileFail')) {
+    const copy = el('button', {
+      type: 'button',
+      class: 'subtle-btn',
+      title: 'Copy this failure: message and stack trace',
+      text: 'copy',
+    });
+    copy.addEventListener('click', (event) => {
+      event.stopPropagation();
+      api.post({ type: 'results:copyFailure', className: group.name, methodName: result.methodName });
+      // Feedback where the click was: the host's status-bar note is a window away.
+      copy.textContent = 'copied ✓';
+      window.setTimeout(() => (copy.textContent = 'copy'), 1500);
+    });
+    children.push(copy);
+  }
   children.push(
     el('span', { class: 'ms', text: result.runTime > 0 ? fmtMs(result.runTime) : '—' }),
   );
@@ -522,6 +540,8 @@ function frameButton(frame: ParsedFrame, key: string, active: boolean): HTMLElem
 function onActivate(node: HTMLElement, run: () => void): void {
   node.addEventListener('click', run);
   node.addEventListener('keydown', (event) => {
+    // A key on the row's own log/copy button is that button's, not the row's.
+    if (event.target !== node) return;
     if (event.key !== 'Enter' && event.key !== ' ') return;
     event.preventDefault();
     run();

@@ -61,6 +61,8 @@ import {
   coverageOrgChangedNote,
   dropClasses,
   excludeDeployed,
+  failedResults,
+  failureText,
   handoffCoverageNote,
   handoffLabel,
   isSelector,
@@ -628,6 +630,21 @@ export class TestRunner implements vscode.Disposable {
     }
     await vscode.env.clipboard.writeText(summaryText(run));
     void vscode.window.showInformationMessage('SF Tests: run summary copied.');
+  }
+
+  /** One failed method, the way the run summary lists it. A status-bar note,
+   *  not a toast: copying failures one by one would stack a toast per click. */
+  async copyFailure(className: string, methodName: string): Promise<void> {
+    const failure = failedResults(this.deps.state.run?.summary).find(
+      (r) => r.className === className && r.methodName === methodName,
+    );
+    if (!failure) {
+      // A newer run replaced the one the click was on.
+      void vscode.window.showInformationMessage(`${className}.${methodName} is not a failure in the current run.`);
+      return;
+    }
+    await vscode.env.clipboard.writeText(failureText(failure));
+    vscode.window.setStatusBarMessage(`$(check) Copied ${className}.${methodName}`, 3000);
   }
 
   dispose(): void {

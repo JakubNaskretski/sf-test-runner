@@ -6,6 +6,8 @@ import {
   coverageOrgChangedNote,
   dropClasses,
   excludeDeployed,
+  failedResults,
+  failureText,
   handoffCoverageNote,
   handoffLabel,
   isSelector,
@@ -143,6 +145,24 @@ test('summaryText lists one entry per failure with its stack indented beneath, p
   );
   assert.equal(lines[2], '    Class.AccountServiceTest.testUpdate: line 9, column 1');
   assert.equal(lines[3], '✗ InvoiceCalculatorTest.testNetTotal — Variable does not exist: total');
+});
+
+test('failureText copies one failure exactly as the summary lists it, and nothing else', () => {
+  const [update, compile] = failedResults(summary());
+  assert.equal(
+    failureText(update),
+    '✗ AccountServiceTest.testUpdate — System.AssertException: Assertion Failed: expected 1, got 0\n' +
+      '    Class.AccountServiceTest.testUpdate: line 9, column 1',
+  );
+  assert.equal(failureText(compile), '✗ InvoiceCalculatorTest.testNetTotal — Variable does not exist: total');
+  assert.equal(
+    failureText({ ...compile, message: 'bad\t=HYPERLINK("x")' }),
+    '✗ InvoiceCalculatorTest.testNetTotal — bad =HYPERLINK("x")',
+  );
+  assert.deepEqual(
+    summaryText(record()).split('\n').slice(1),
+    [failureText(update), failureText(compile)].join('\n').split('\n'),
+  );
 });
 
 test('summaryText keeps every frame of a multi-line stack, one per line', () => {
