@@ -16,6 +16,7 @@ import type { RunRecord } from './types';
 import { conventionNames, type HandoffResolution } from './ui/activeFileTests';
 
 const CLASS_NAME = /^\w+$/;
+const REQUEST_ID = /^[\w-]{1,64}$/;
 const MAX_CLASS_NAMES = 200;
 
 export const HANDOFF_BUSY_MESSAGE = 'A test run is already in progress. Wait for it to finish.';
@@ -26,6 +27,10 @@ export interface HandoffArgs {
   /** The caller's own claim that `classNames` are on `targetOrg` right now
    *  (it just deployed them) — see `excludeDeployed` in `runs/runLabel.ts`. */
   deployed?: boolean;
+  /** The caller's own id for the request (SF Deploy sends the id of the
+   *  deploy it is testing): a repeat joins the run in progress only when it
+   *  carries the same one — see `handoffKey`. */
+  requestId?: string;
 }
 
 export type HandoffShapeResult =
@@ -70,7 +75,7 @@ export function parseHandoffShape(raw: unknown): HandoffShapeResult {
   if (typeof raw !== 'object' || raw === null) {
     return { ok: false, message: 'Expected an object with classNames and targetOrg.' };
   }
-  const { classNames, targetOrg, deployed } = raw as Record<string, unknown>;
+  const { classNames, targetOrg, deployed, requestId } = raw as Record<string, unknown>;
 
   if (!Array.isArray(classNames) || classNames.length === 0 || classNames.length > MAX_CLASS_NAMES) {
     return {
@@ -88,6 +93,12 @@ export function parseHandoffShape(raw: unknown): HandoffShapeResult {
   if (deployed !== undefined && typeof deployed !== 'boolean') {
     return { ok: false, message: 'deployed must be a boolean when present.' };
   }
+  if (requestId !== undefined && (typeof requestId !== 'string' || !REQUEST_ID.test(requestId))) {
+    return {
+      ok: false,
+      message: 'requestId must be 1-64 letters, digits, "_" or "-" when present.',
+    };
+  }
 
   return {
     ok: true,
@@ -95,6 +106,7 @@ export function parseHandoffShape(raw: unknown): HandoffShapeResult {
       classNames: [...classNames],
       targetOrg: targetOrg as string,
       ...(deployed !== undefined ? { deployed } : {}),
+      ...(requestId !== undefined ? { requestId: requestId as string } : {}),
     },
   };
 }
@@ -299,6 +311,23 @@ export function toRunTestsForResult(
     failed: record.summary?.failing ?? 0,
     message: record.error,
   };
+}
+
+/**
+ * Which handoff request this is, for telling a repeat of a request still in
+ * progress apart from a new one: the org, the SET of test classes, and the
+ * caller's `requestId` when it sent one. Usernames and Apex class names are
+ * both case-insensitive, and the order classes were resolved in (or a name
+ * listed twice) doesn't make it a different request; a different
+ * `requestId` (a newer deploy of the same classes) does.
+ */
+export function handoffKey(
+  orgUsername: string,
+  testClasses: readonly string[],
+  requestId?: string,
+): string {
+  const classes = [...new Set(testClasses.map((c) => c.toLowerCase()))].sort();
+  return JSON.stringify([orgUsername.toLowerCase(), classes, requestId ?? null]);
 }
 
 /** Longest `message` a handoff result composes. The deploy panel shows it

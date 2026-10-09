@@ -10,6 +10,7 @@ import {
   deploySucceeded,
   explainHandoff,
   handoffCapMessage,
+  handoffKey,
   joinNotes,
   MAX_HANDOFF_MESSAGE,
   parseDeployResult,
@@ -649,4 +650,49 @@ test('joinNotes: joins with a stop, keeps an existing stop, and cuts only betwee
   assert.equal(joinNotes(['aaaaaa', 'bbbbbb', 'cccccc'], 20), 'aaaaaa … and 2 more');
   assert.equal(joinNotes(['x'.repeat(30)], 10), `${'x'.repeat(9)}…`);
   assert.equal(joinNotes([]), '');
+});
+
+test('a handoff is the same request for the same org and the same set of test classes', () => {
+  const key = handoffKey('dev@acme.example', ['AcmeServiceTest', 'AcmeOtherTest']);
+  assert.equal(handoffKey('Dev@Acme.example', ['acmeothertest', 'AcmeServiceTest']), key);
+  assert.equal(
+    handoffKey('dev@acme.example', ['AcmeOtherTest', 'AcmeServiceTest', 'AcmeOtherTest']),
+    key,
+  );
+});
+
+test('another org, or another set of test classes, is a different request', () => {
+  const key = handoffKey('dev@acme.example', ['AcmeServiceTest', 'AcmeOtherTest']);
+  assert.notEqual(handoffKey('qa@acme.example', ['AcmeServiceTest', 'AcmeOtherTest']), key);
+  assert.notEqual(handoffKey('dev@acme.example', ['AcmeServiceTest']), key);
+  assert.notEqual(
+    handoffKey('dev@acme.example', ['AcmeServiceTest', 'AcmeOtherTest', 'AcmeThirdTest']),
+    key,
+  );
+});
+
+test('the caller\'s requestId is part of the request: same id same request, another id another', () => {
+  const classes = ['AcmeServiceTest'];
+  const key = handoffKey('dev@acme.example', classes, 'deploy-7');
+  assert.equal(handoffKey('DEV@acme.example', classes, 'deploy-7'), key);
+  assert.notEqual(handoffKey('dev@acme.example', classes, 'deploy-8'), key);
+  assert.notEqual(handoffKey('dev@acme.example', classes), key, 'no id is not any id');
+  assert.equal(handoffKey('dev@acme.example', classes), handoffKey('dev@acme.example', classes));
+});
+
+test('requestId is optional, and when present a short plain id', () => {
+  const base = { classNames: ['AcmeService'], targetOrg: 'alice@example.com' };
+  const plain = parseHandoffArgs(base, KNOWN);
+  assert.equal(plain.ok, true);
+  assert.equal(plain.ok && 'requestId' in plain.value, false);
+
+  for (const requestId of ['0Af000000000001AAA', 'deploy-7_b', 'x'.repeat(64)]) {
+    const result = parseHandoffArgs({ ...base, requestId }, KNOWN);
+    assert.equal(result.ok && result.value.requestId, requestId, requestId);
+  }
+  for (const requestId of ['', 'x'.repeat(65), 'a b', '../x', 'a|b', 7, null, ['a']]) {
+    const result = parseHandoffArgs({ ...base, requestId }, KNOWN);
+    assert.equal(result.ok, false, String(requestId));
+    assert.match(result.ok ? '' : result.message, /requestId/);
+  }
 });

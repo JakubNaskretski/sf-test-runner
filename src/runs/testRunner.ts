@@ -26,8 +26,10 @@ import {
   decideAfterDeploy,
   deploySucceeded,
   handoffCapMessage,
+  handoffKey,
   parseDeployResult,
   RunForOutcome,
+  RunTestsForResult,
   shouldSwitchPicker,
 } from '../handoff';
 import { isLikelyProduction } from '../kit/orgs';
@@ -59,6 +61,8 @@ import {
   coverageOrgChangedNote,
   dropClasses,
   excludeDeployed,
+  failedResults,
+  failureText,
   handoffCoverageNote,
   handoffLabel,
   isSelector,
@@ -91,6 +95,16 @@ export interface TestRunnerDeps {
   matchOrg(org: OrgInfo): void;
 }
 
+/** One handoff request, as `TestRunner.handoff` takes it. */
+export interface HandoffRequest {
+  /** The CALLER's target org, which need not be the picker's. */
+  org: OrgInfo;
+  /** The resolved test classes to run. */
+  testClasses: readonly string[];
+  /** The caller's own id for the request, when it sent one. */
+  requestId?: string;
+}
+
 /**
  * More than this many CLASS selectors and the command line gets long enough to
  * be truncated on Windows (8191 chars). The org already has a word for "every
@@ -119,11 +133,13 @@ export class TestRunner implements vscode.Disposable {
   /** The untitled tab each log was opened in, so a second click focuses it
    *  instead of minting another dirty document. */
   private readonly logDocs = new Map<string, vscode.TextDocument>();
+  /** The handoff requests still in progress, by `handoffKey`, each with the
+   *  result its first caller will get — see `handoff`. */
+  private readonly handoffsInFlight = new Map<string, Promise<RunTestsForResult>>();
 
   constructor(private readonly deps: TestRunnerDeps) {}
 
-  /** Whether a run currently holds the single-run guard — checked by callers
-   *  (the cross-extension test handoff) that must not even attempt a start. */
+  /** Whether a run currently holds the single-run guard. */
   get isRunning(): boolean {
     return this.guard.isRunning;
   }
@@ -224,7 +240,7 @@ export class TestRunner implements vscode.Disposable {
    *
    * `record` is undefined when the run never started: `error` is set only
    * for that refusal; otherwise `busy` distinguishes a guard race (a second
-   * handoff raced past the caller's own `isRunning` check) from a declined
+   * handoff raced past `handoff`'s own `isRunning` check) from a declined
    * production confirmation or a dismissed/emptied not-deployed modal, both
    * of which the caller has already been told about via a toast and should
    * read as cancelled.
@@ -278,6 +294,52 @@ export class TestRunner implements vscode.Disposable {
       },
     );
     return { record, ranSelectors: confirmed, busy };
+  }
+
+  /**
+   * The cross-extension handoff's way in, around `runFor`: `run` starts the
+   * run and builds the result its caller gets; `busy` is the answer when
+   * another run holds the guard.
+   *
+   * A repeat of a request still in progress — the SAME org, the SAME set of
+   * test classes and the same caller `requestId` (`handoffKey`), e.g. one
+   * Run tests click that reached this plugin twice — joins it rather than
+   * being told a run is already going: it waits for that request and
+   * resolves with the very result object the first caller gets. That holds
+   * while the first is still at its not-deployed or production question (so
+   * no second dialog) and while it runs. Once it has finished, the same
+   * request is a new one and starts a new run: a retry is meant. Any other
+   * request while a run holds the guard stays `busy`. Requests are kept
+   * per key, so a different one arriving while the first waits at a dialog
+   * doesn't stop a repeat of the first from finding it.
+   */
+  async handoff(
+    request: HandoffRequest,
+    run: () => Promise<RunTestsForResult>,
+    busy: () => RunTestsForResult,
+  ): Promise<RunTestsForResult> {
+    const key = handoffKey(request.org.username, request.testClasses, request.requestId);
+    const inFlight = this.handoffsInFlight.get(key);
+    if (inFlight) {
+      this.deps.output.appendLine(
+        `SF Tests (from SF Deploy): the same tests on ${request.org.alias} were asked for again — ` +
+          'joined the run already in progress.',
+      );
+      return inFlight;
+    }
+    if (this.isRunning) return busy();
+
+    // In place before `run` takes its first step, so a repeat arriving while
+    // this one waits on a dialog or the org already finds it.
+    const result = Promise.resolve().then(run);
+    this.handoffsInFlight.set(key, result);
+    try {
+      return await result;
+    } finally {
+      // Whatever run this started has released the guard by now; from here
+      // the same request is a new one.
+      if (this.handoffsInFlight.get(key) === result) this.handoffsInFlight.delete(key);
+    }
   }
 
   /** `RunLocalTests`: every test in the org except managed-package ones. */
@@ -568,6 +630,21 @@ export class TestRunner implements vscode.Disposable {
     }
     await vscode.env.clipboard.writeText(summaryText(run));
     void vscode.window.showInformationMessage('SF Tests: run summary copied.');
+  }
+
+  /** One failed method, the way the run summary lists it. A status-bar note,
+   *  not a toast: copying failures one by one would stack a toast per click. */
+  async copyFailure(className: string, methodName: string): Promise<void> {
+    const failure = failedResults(this.deps.state.run?.summary).find(
+      (r) => r.className === className && r.methodName === methodName,
+    );
+    if (!failure) {
+      // A newer run replaced the one the click was on.
+      void vscode.window.showInformationMessage(`${className}.${methodName} is not a failure in the current run.`);
+      return;
+    }
+    await vscode.env.clipboard.writeText(failureText(failure));
+    vscode.window.setStatusBarMessage(`$(check) Copied ${className}.${methodName}`, 3000);
   }
 
   dispose(): void {

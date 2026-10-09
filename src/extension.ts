@@ -233,6 +233,7 @@ export function activate(context: vscode.ExtensionContext): void {
       void resolver.open(className, { method, line, isTrigger }),
     rerunFailed: () => void runner.rerunFailed(),
     copySummary: () => void runner.copySummary(),
+    copyFailure: (className, methodName) => void runner.copyFailure(className, methodName),
     showLog: (className, methodName) => void runner.showLog(className, methodName),
     loadRecent: () => void runner.loadRecent(),
   };
@@ -376,14 +377,16 @@ export function activate(context: vscode.ExtensionContext): void {
    * anyone — every argument is validated by `parseHandoffShape` before any
    * of it reaches a CLI selector or an org lookup; the known-org check runs
    * separately here (rather than via `parseHandoffArgs`) so a miss can
-   * refresh the list once and retry before it is reported as unknown.
+   * refresh the list once and retry before it is reported as unknown. The
+   * same request arriving again while it is still in progress gets the same
+   * run and the same result.
    */
   async function runTestsFor(raw: unknown): Promise<RunTestsForResult> {
     const shape = parseHandoffShape(raw);
     if (!shape.ok) {
       return { status: 'error', testClasses: [], passed: 0, failed: 0, message: shape.message };
     }
-    const { classNames, targetOrg, deployed } = shape.value;
+    const { classNames, targetOrg, deployed, requestId } = shape.value;
 
     const resolved = await resolveHandoffOrg(targetOrg);
     if ('error' in resolved) {
@@ -408,26 +411,40 @@ export function activate(context: vscode.ExtensionContext): void {
       return result;
     }
 
-    if (runner.isRunning) {
-      return explainHandoff(
+    // A repeat of the request already in progress joins it (see
+    // `TestRunner.handoff`); anything else while a run is going is busy.
+    const busy = (): RunTestsForResult =>
+      explainHandoff(
         toRunTestsForResult({ record: undefined, ranSelectors: [], busy: true }, testClasses),
         resolution,
       );
-    }
-
-    testsView.reveal();
-    resultsView.reveal();
-    const outcome = await runner.runFor(testClasses, org, deployed ? { deployed: classNames } : undefined);
-    const result = explainHandoff(toRunTestsForResult(outcome, testClasses), resolution, outcome.record);
-    if (result.message && result.message !== outcome.record?.error) {
-      output.appendLine(`SF Tests (from SF Deploy): ${result.message}`);
-    }
-    // An @IsTest class the org found empty is "no tests", not the generic
-    // "this run reported no test results" — say it in the Results view too.
-    if (result.status === 'noTests' && outcome.record && state.run?.id === outcome.record.id) {
-      state.updateRun({ error: result.message });
-    }
-    return result;
+    return runner.handoff(
+      { org, testClasses, requestId },
+      async () => {
+        testsView.reveal();
+        resultsView.reveal();
+        const outcome = await runner.runFor(
+          testClasses,
+          org,
+          deployed ? { deployed: classNames } : undefined,
+        );
+        const result = explainHandoff(
+          toRunTestsForResult(outcome, testClasses),
+          resolution,
+          outcome.record,
+        );
+        if (result.message && result.message !== outcome.record?.error) {
+          output.appendLine(`SF Tests (from SF Deploy): ${result.message}`);
+        }
+        // An @IsTest class the org found empty is "no tests", not the generic
+        // "this run reported no test results" — say it in the Results view too.
+        if (result.status === 'noTests' && outcome.record && state.run?.id === outcome.record.id) {
+          state.updateRun({ error: result.message });
+        }
+        return result;
+      },
+      busy,
+    );
   }
 
   /**

@@ -2,6 +2,13 @@
 
 All notable changes to the "sf-test-runner" extension are documented here.
 
+## [0.16.3] - 2026-10-08
+
+- **A repeated Run tests for the same classes joins the run in progress instead of "already running".** When SF Deploy asks again for the same tests on the same org, for the same deploy, while that run is still going, the second request waits for it and gets the same result, instead of being told a test run is already in progress or running the tests twice. If the first is still asking whether to run, you are asked once. Once a run has finished, Run tests starts a new one. A request for different tests, a different org or a newer deploy while a run is going is still told to wait for it to finish, as before.
+- **Copy one failed test.** Each failed test in the Results view has a small *copy* button next to its name: it copies just that test's message and stack trace, the same lines the run's Copy gives for it. The run bar's Copy still copies the whole run.
+- **No console windows on Windows.** Every `sf` call (org list, runs, status checks) used to be able to flash a console window; they now run hidden.
+- Enter on a test's *log* or *copy* button, or on a Coverage row's ☁ button, now does what the button says instead of opening the class.
+
 ## [0.16.2] - 2026-10-08
 
 - **A deployed class annotated `@isTest` runs as its own test.** When SF Deploy hands over a class whose declaration carries `@isTest` (`@isTest`, `@IsTest(SeeAllData=true)`, on its own line or the same one) but none of whose methods this extension recognises as tests, it is no longer reported as "no matching test class" — it runs by its own name and the org decides what in it is a test, alongside the tests found for it as before (`@IsTest(testFor=…)`, else `HelperTest`/`TestHelper`/`Helper_Test`/`HelperTests`). If the org finds no test method in it, the result says so plainly: "Helper: @isTest, but the org found no test methods in it". Such classes still stay out of the Tests view and get no CodeLens, so data factories and callout mocks don't clutter it.

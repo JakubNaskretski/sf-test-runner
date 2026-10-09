@@ -207,12 +207,15 @@ export function summaryText(run: RunRecord): string {
 
   const lines = [parts.join(' · ')];
   if (run.error) lines.push(`Error: ${oneLine(run.error)}`);
-  for (const failure of failedResults(summary)) {
-    const detail = oneLine(failure.message) || failure.outcome;
-    lines.push(`✗ ${failure.className}.${failure.methodName} — ${detail}`);
-    for (const frame of stackLines(failure.stackTrace)) lines.push(`    ${frame}`);
-  }
+  for (const failure of failedResults(summary)) lines.push(failureText(failure));
   return lines.join('\n');
+}
+
+/** One failure as the summary lists it — also what a failed row's "copy" copies. */
+export function failureText(failure: TestMethodResult): string {
+  const detail = oneLine(failure.message) || failure.outcome;
+  const frames = stackLines(failure.stackTrace).map((frame) => `    ${frame}`);
+  return [`✗ ${failure.className}.${failure.methodName} — ${detail}`, ...frames].join('\n');
 }
 
 function verdict(status: RunRecord['status']): string {
@@ -240,5 +243,6 @@ function stackLines(text: string | null | undefined): string[] {
 
 /** Collapse a multi-line CLI message onto one line so the copy stays scannable. */
 function oneLine(text: string | null | undefined): string {
-  return (text ?? '').replace(/\s*\r?\n\s*/g, ' ').trim();
+  // All whitespace, tabs too: a tab pasted into a spreadsheet starts a new cell.
+  return (text ?? '').replace(/\s+/g, ' ').trim();
 }
